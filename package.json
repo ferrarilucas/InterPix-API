@@ -1,0 +1,24 @@
+{
+  "name": "pix-inter-api",
+  "version": "1.0.0",
+  "description": "API para gerar PIX com Banco Inter",
+  "main": "server.js",
+  "scripts": {
+    "start": "node dist/server.js",
+    "build": "tsc",
+    "dev": "tsc && node dist/server.js",
+    "type-check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "axios": "^1.4.0",
+    "dotenv": "^16.0.3",
+    "express": "^4.18.2",
+    "uuid": "^9.0.0",
+    "zod": "^4.0.14"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.3",
+    "@types/uuid": "^10.0.0",
+    "typescript": "^5.8.3"
+  }
+}
