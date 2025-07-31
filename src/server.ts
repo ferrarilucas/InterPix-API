@@ -1,7 +1,7 @@
 import express, { Request, Response } from 'express';
 import { v4 as uuidv4 } from 'uuid';
-import { createCharge, getCharge } from './inter-pix';
-import { authorizeRecurringCharge, createRecurringCharge, getRecurringCharge } from './recorrencia-pix';
+import { createCharge, getCharge } from './pix';
+import { authorizeRecurringCharge, createRecurringCharge, getRecurringCharge } from './recurringPix';
 import { 
   CreateChargeRequest, 
   CreateRecurringChargePublicRequest,
