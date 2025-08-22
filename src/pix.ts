@@ -2,6 +2,7 @@ import { AxiosError } from 'axios';
 import 'dotenv/config';
 import { api } from './shared/api';
 import { PixCharge } from './types';
+import { PixReceivedListResponse } from './types/inter-api';
 
 const { PIX_KEY } = process.env;
 
@@ -43,5 +44,16 @@ export async function getCharge(txid: string): Promise<PixCharge> {
     const err = error as AxiosError;
     console.error("Error querying charge:", err.response?.data || err.message);
     throw new Error("Could not query PIX charge.");
+  }
+}
+
+export async function getReceivedPixByTxid(txid: string, inicioIso: string, fimIso: string): Promise<PixReceivedListResponse> {
+  try {
+    const response = await api.get(`/pix/v2/pix`, { params: { inicio: inicioIso, fim: fimIso, txid } });
+    return response.data as PixReceivedListResponse;
+  } catch (error) {
+    const err = error as AxiosError;
+    console.error('Error querying received pix:', err.response?.data || err.message);
+    throw new Error('Could not query received PIX.');
   }
 }

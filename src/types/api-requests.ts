@@ -1,6 +1,9 @@
 // Public API request/response interfaces (English)
 export interface CreateChargeRequest {
   value: number;
+  internalId: string;
+  callbackUrl?: string;
+  taxId?: string;
 }
 
 export interface CreateRecurringChargePublicRequest {

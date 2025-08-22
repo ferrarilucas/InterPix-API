@@ -4,7 +4,7 @@
 ![Express.js](https://img.shields.io/badge/Express.js-4.x-green?style=for-the-badge&logo=express)
 ![TypeScript](https://img.shields.io/badge/TypeScript-5.x-blue?style=for-the-badge&logo=typescript)
 
-API facilitada para integração com o sistema de pagamentos PIX do Banco Inter, permitindo a criação e consulta de cobranças imediatas e recorrentes.
+API facilitada para integração com o sistema de pagamentos PIX do Banco Inter, permitindo a criação e consulta de cobranças imediatas e recorrentes, armazenamento de transações no Supabase e callbacks automáticos quando o pagamento é concluído.
 
 ## Funcionalidades
 
@@ -19,10 +19,13 @@ API facilitada para integração com o sistema de pagamentos PIX do Banco Inter,
 
 O projeto foi estruturado de forma modular para facilitar a manutenção e evitar duplicação de código:
 
-- **`src/server.ts`**: Servidor Express com as rotas da API
-- **`src/shared/api.ts`**: Módulo compartilhado com configuração da API do Banco Inter e autenticação centralizada
-- **`src/inter-pix.ts`**: Funções para cobranças PIX imediatas
-- **`src/recorrencia-pix.ts`**: Funções para cobranças PIX recorrentes
+- **`src/server.ts`**: Servidor Express com as rotas da API e job de cron
+- **`src/shared/api.ts`**: Configuração da API do Banco Inter e autenticação (OAuth)
+- **`src/pix.ts`**: Cobranças PIX imediatas e consulta de recebimentos
+- **`src/recurringPix.ts`**: Cobranças PIX com vencimento/recorrentes
+- **`src/shared/supabase.ts`**: Cliente do Supabase
+- **`src/repositories/transactions.ts`**: Persistência de transações e atualizações de status/taxId
+- **`src/types/transactions.ts`**: Tipos de transações persistidas
 
 ## Pré-requisitos
 
@@ -66,8 +69,14 @@ O projeto foi estruturado de forma modular para facilitar a manutenção e evita
     INTER_CLIENT_ID=seu-client-id
     INTER_CLIENT_SECRET=seu-client-secret
 
-    # Chave PIX que será usada para gerar as cobranças
+    # Chave PIX usada para gerar as cobranças
     PIX_KEY=sua-chave-pix
+
+    # Supabase (use Service Role Key no backend)
+    SUPABASE_URL=https://xxxx.supabase.co
+    SUPABASE_KEY=eyJhbGciOiJI...service_role
+    # Opcional: nome da tabela; default: transactions
+    SUPABASE_TRANSACTIONS_TABLE=transactions
     ```
 
 ## Como Executar
@@ -86,6 +95,45 @@ O projeto foi estruturado de forma modular para facilitar a manutenção e evita
 
     O servidor estará rodando em `http://localhost:3000`.
 
+## Banco de Dados (Supabase)
+
+Crie a tabela (ajuste o nome conforme `SUPABASE_TRANSACTIONS_TABLE`):
+
+```sql
+create extension if not exists pgcrypto;
+
+create table if not exists transactions (
+  id uuid primary key default gen_random_uuid(),
+  txid text not null unique,
+  internal_id text not null,
+  tax_id text null,
+  status text not null check (status in ('ACTIVE','COMPLETED','REMOVED_BY_USER','REMOVED_BY_PSP')),
+  callback_url text null,
+  amount text not null,
+  pix_copy_paste text null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create index if not exists idx_transactions_status on transactions (status);
+create index if not exists idx_transactions_created_at on transactions (created_at);
+
+create or replace function set_updated_at()
+returns trigger as $$
+begin
+  new.updated_at = now();
+  return new;
+end;
+$$ language plpgsql;
+
+drop trigger if exists trg_transactions_set_updated_at on transactions;
+create trigger trg_transactions_set_updated_at
+before update on transactions
+for each row execute function set_updated_at();
+```
+
+RLS: utilize a Service Role Key no backend OU crie políticas que permitam INSERT/SELECT/UPDATE para o role adequado.
+
 ## Desenvolvimento
 
 ### Estrutura de Pastas
@@ -93,15 +141,19 @@ O projeto foi estruturado de forma modular para facilitar a manutenção e evita
 ```
 src/
 ├── shared/
-│   └── api.ts          # Configuração compartilhada da API do Banco Inter
+│   ├── api.ts            # Configuração da API do Banco Inter (OAuth)
+│   └── supabase.ts       # Cliente Supabase
+├── repositories/
+│   └── transactions.ts   # Persistência de transações
 ├── types/
-│   ├── index.ts        # Exportações centralizadas dos tipos
-│   ├── api-requests.ts # Interfaces da API pública (inglês)
-│   ├── inter-api.ts    # Interfaces da API do Banco Inter (português)
-│   └── mappers.ts      # Funções de mapeamento entre formatos
-├── inter-pix.ts        # Funções para cobranças imediatas
-├── recorrencia-pix.ts  # Funções para cobranças recorrentes
-└── server.ts           # Servidor Express e rotas
+│   ├── index.ts          # Exportações centralizadas dos tipos
+│   ├── api-requests.ts   # Interfaces da API pública (inglês)
+│   ├── inter-api.ts      # Interfaces da API do Banco Inter (pt-BR)
+│   ├── transactions.ts   # Tipos da entidade persistida
+│   └── mappers.ts        # Mapeamentos entre formatos
+├── pix.ts                # Cobranças imediatas e recebimentos
+├── recurringPix.ts       # Cobranças com vencimento
+└── server.ts             # Servidor Express, rotas e cron
 ```
 
 ### Scripts Disponíveis
@@ -123,6 +175,16 @@ Isso garante que a API seja internacional e fácil de usar, enquanto mantém com
 
 ---
 
+## Persistência e Cron
+
+- Ao criar `/charge`, a API salva no Supabase: `txid`, `internalId`, `taxId` (opcional), `status`, `callbackUrl` (opcional), `amount` e `pix_copy_paste`.
+- Um cron job roda a cada 30 segundos e verifica transações `ACTIVE` criadas nos últimos 40 minutos:
+  - Consulta o status no Inter; se mudar para `COMPLETED`, registra no banco
+  - Busca o CPF/CNPJ do pagador via `GET /pix/v2/pix` (requer escopo `pix.read`) e atualiza `tax_id` quando disponível
+  - Se houver `callbackUrl`, envia POST com `{ status, taxId, internalId }`
+
+---
+
 ## API Endpoints
 
 A seguir estão os detalhes dos endpoints disponíveis na API.
@@ -131,13 +193,16 @@ A seguir estão os detalhes dos endpoints disponíveis na API.
 
 #### 1. Criar Cobrança (`POST /charge`)
 
-Cria uma nova cobrança PIX com um valor específico.
+Cria uma nova cobrança PIX com um valor específico e registra metadados para acompanhamento.
 
 **Request Body:**
 
 ```json
 {
-  "value": 10.50
+  "value": 10.50,
+  "internalId": "order-abc-123",
+  "callbackUrl": "https://minha.app/callback",
+  "taxId": "12345678901"
 }
 ```
 
@@ -147,12 +212,15 @@ Cria uma nova cobrança PIX com um valor específico.
 curl -X POST http://localhost:3000/charge \
 -H "Content-Type: application/json" \
 -d '{
-  "value": 10.50
+  "value": 10.50,
+  "internalId": "order-abc-123",
+  "callbackUrl": "https://minha.app/callback",
+  "taxId": "12345678901"
 }'
 ```
 
 **Response (201 Created):**
-Retorna o objeto completo da cobrança criada, incluindo o `txid` e o payload para o QR Code.
+Retorna o objeto completo da cobrança criada, incluindo `txid`, `status`, `value.original`, `pixCopyPaste` e `location`.
 
 #### 2. Consultar Cobrança (`GET /charge/:txid`)
 

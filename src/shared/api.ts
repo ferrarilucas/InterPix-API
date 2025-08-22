@@ -57,7 +57,7 @@ async function getAccessToken(): Promise<string> {
   params.append('client_id', INTER_CLIENT_ID || '');
   params.append('client_secret', INTER_CLIENT_SECRET || '');
   params.append('grant_type', 'client_credentials');
-  params.append('scope', 'cob.read cob.write cobv.read cobv.write');
+  params.append('scope', 'cob.read cob.write cobv.read cobv.write pix.read');
 
   pendingTokenPromise = (async () => {
     try {

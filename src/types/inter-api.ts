@@ -110,3 +110,18 @@ export interface AuthorizeRecurringChargeResponse {
   status: 'AUTORIZADA' | 'NEGADA';
   revisao?: number;
 } 
+
+export interface PixReceivedItem {
+  endToEndId: string;
+  txid: string;
+  valor: string;
+  horario: string;
+  pagador?: {
+    cpf?: string;
+    cnpj?: string;
+  };
+}
+
+export interface PixReceivedListResponse {
+  pix: PixReceivedItem[];
+}
