@@ -116,7 +116,7 @@ app.listen(PORT, () => {
 
 cron.schedule('*/30 * * * * *', async () => {
   try {
-    const since = new Date(Date.now() - 40 * 60 * 1000).toISOString();
+    const since = new Date(Date.now() - 60 * 60 * 1000).toISOString();
     const pending = await listRecentIncompleteTransactions(since);
     if (!pending.length) return;
     for (const tx of pending) {
