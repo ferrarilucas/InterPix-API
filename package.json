@@ -9,7 +9,8 @@
     "dev": "tsc && node dist/server.js",
     "type-check": "tsc --noEmit",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "migrate": "node -e \"require('./dist/shared/migrations').runMigrations(process.env.DATABASE_URL).then(a=>console.log(a))\""
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.56.0",
