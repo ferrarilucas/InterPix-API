@@ -1,3 +1,4 @@
+import { randomUUID } from 'crypto';
 import { afterAll, describe, expect, it } from 'vitest';
 import { closePool } from '../shared/db';
 import { createSubscription } from '../test/factories';
@@ -7,6 +8,8 @@ import {
   listActiveSubscriptionsDueFor,
   updateSubscriptionStatus,
 } from './subscriptions';
+
+const runId = randomUUID();
 
 afterAll(async () => {
   await closePool();
@@ -37,21 +40,23 @@ describe('subscriptions repository', () => {
   it('atualiza status e campos do patch juntos', async () => {
     const created = await createSubscription();
 
+    const interRecId = `rec-123-${runId}`;
     const updated = await updateSubscriptionStatus(created.id, 'ACTIVE', {
-      interRecId: 'rec-123',
+      interRecId,
       authorizedAt: new Date().toISOString(),
     });
 
     expect(updated.status).toBe('ACTIVE');
-    expect(updated.interRecId).toBe('rec-123');
+    expect(updated.interRecId).toBe(interRecId);
     expect(updated.authorizedAt).toBeTruthy();
   });
 
   it('busca por rec id do Inter', async () => {
     const created = await createSubscription();
-    await updateSubscriptionStatus(created.id, 'ACTIVE', { interRecId: 'rec-busca' });
+    const interRecId = `rec-busca-${runId}`;
+    await updateSubscriptionStatus(created.id, 'ACTIVE', { interRecId });
 
-    const found = await findSubscriptionByRecId('rec-busca');
+    const found = await findSubscriptionByRecId(interRecId);
     expect(found?.id).toBe(created.id);
   });
 
@@ -60,8 +65,8 @@ describe('subscriptions repository', () => {
     const dueLater = await createSubscription({ nextDueDate: '2026-12-01' });
     const pending = await createSubscription({ nextDueDate: '2026-10-01' });
 
-    await updateSubscriptionStatus(dueSoon.id, 'ACTIVE', { interRecId: 'rec-a' });
-    await updateSubscriptionStatus(dueLater.id, 'ACTIVE', { interRecId: 'rec-b' });
+    await updateSubscriptionStatus(dueSoon.id, 'ACTIVE', { interRecId: `rec-a-${runId}` });
+    await updateSubscriptionStatus(dueLater.id, 'ACTIVE', { interRecId: `rec-b-${runId}` });
 
     const result = await listActiveSubscriptionsDueFor('2026-10-01');
     const ids = result.map((item) => item.id);
@@ -69,5 +74,14 @@ describe('subscriptions repository', () => {
     expect(ids).toContain(dueSoon.id);
     expect(ids).not.toContain(dueLater.id);
     expect(ids).not.toContain(pending.id);
+  });
+
+  it('mantem o next_due_date exato ao ler a assinatura de volta', async () => {
+    const created = await createSubscription({ nextDueDate: '2026-09-15' });
+    const found = await findSubscriptionById(created.id);
+
+    expect(created.nextDueDate).toBe('2026-09-15');
+    expect(found?.nextDueDate).toBe('2026-09-15');
+    expect(found?.nextDueDate).toMatch(/^\d{4}-\d{2}-\d{2}$/);
   });
 });
