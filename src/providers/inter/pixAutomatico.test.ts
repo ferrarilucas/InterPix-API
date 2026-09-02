@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { api } from '../../shared/api';
 import { AppError } from '../../shared/errors';
-import { createCharge, createRecurrence, getChargeByTxid } from './pixAutomatico';
+import { createCharge, createRecurrence, getChargeByTxid, getRecurrence } from './pixAutomatico';
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -41,7 +41,8 @@ describe('createRecurrence', () => {
     });
 
     expect(result.recId).toBe('rec-2');
-    expect(result.status).toBe('CRIADA');
+    expect(result.status).toBe('CREATED');
+    expect(result.rawStatus).toBe('CRIADA');
   });
 
   it('converte falha do Inter em AppError.upstream sem vazar o corpo', async () => {
@@ -61,6 +62,56 @@ describe('createRecurrence', () => {
         planCode: 'mensal_29_90',
       }),
     ).rejects.toMatchObject({ code: 'UPSTREAM_ERROR' });
+  });
+
+  it('converte falha nao-axios (sem response) em AppError.upstream', async () => {
+    vi.spyOn(api, 'post').mockRejectedValue(new Error('falha de rede generica'));
+
+    await expect(
+      createRecurrence({
+        amount: '29.90',
+        intervalMonths: 1,
+        firstDueDate: '2026-09-20',
+        debtorTaxId: '12345678901',
+        debtorName: 'Fulano',
+        planCode: 'mensal_29_90',
+      }),
+    ).rejects.toMatchObject({ code: 'UPSTREAM_ERROR' });
+  });
+});
+
+describe('mapeamento de status de recorrencia', () => {
+  const cases: Array<[string, string]> = [
+    ['CRIADA', 'CREATED'],
+    ['ENVIADA', 'PENDING_AUTH'],
+    ['RECEBIDA', 'PENDING_AUTH'],
+    ['APROVADA', 'APPROVED'],
+    ['ACEITA', 'APPROVED'],
+    ['REJEITADA', 'DENIED'],
+    ['EXPIRADA', 'DENIED'],
+    ['CANCELADA', 'CANCELED'],
+  ];
+
+  it.each(cases)('mapeia status documentado do Inter %s para %s', async (interStatus, expected) => {
+    vi.spyOn(api, 'get').mockResolvedValue({
+      data: { idRec: 'rec-1', status: interStatus },
+    } as never);
+
+    const result = await getRecurrence('rec-1');
+
+    expect(result.status).toBe(expected);
+    expect(result.rawStatus).toBe(interStatus);
+  });
+
+  it('mapeia status desconhecido para UNKNOWN preservando rawStatus, nunca para um estado de sucesso', async () => {
+    vi.spyOn(api, 'get').mockResolvedValue({
+      data: { idRec: 'rec-1', status: 'ALGO_NOVO' },
+    } as never);
+
+    const result = await getRecurrence('rec-1');
+
+    expect(result.status).toBe('UNKNOWN');
+    expect(result.rawStatus).toBe('ALGO_NOVO');
   });
 });
 
@@ -82,15 +133,53 @@ describe('createCharge', () => {
 });
 
 describe('getChargeByTxid', () => {
-  it('mapeia cobranca liquidada', async () => {
+  it('mapeia cobranca liquidada (CONCLUIDA) para PAID', async () => {
     vi.spyOn(api, 'get').mockResolvedValue({
-      data: { txid: 'txid-1', status: 'LIQUIDADA', endToEndId: 'E123', horario: '2026-09-20T10:00:00Z' },
+      data: {
+        txid: 'txid-1',
+        status: 'CONCLUIDA',
+        pix: [{ endToEndId: 'E123', horario: '2026-09-20T10:00:00Z' }],
+      },
     } as never);
 
     const result = await getChargeByTxid('txid-1');
 
-    expect(result.status).toBe('LIQUIDADA');
+    expect(result.status).toBe('PAID');
+    expect(result.rawStatus).toBe('CONCLUIDA');
     expect(result.endToEndId).toBe('E123');
     expect(result.paidAt).toBe('2026-09-20T10:00:00Z');
+  });
+});
+
+describe('mapeamento de status de cobranca', () => {
+  const cases: Array<[string, string]> = [
+    ['CRIADA', 'CREATED'],
+    ['ATIVA', 'CREATED'],
+    ['CONCLUIDA', 'PAID'],
+    ['EXPIRADA', 'FAILED'],
+    ['REJEITADA', 'FAILED'],
+    ['CANCELADA', 'CANCELED'],
+  ];
+
+  it.each(cases)('mapeia status documentado do Inter %s para %s', async (interStatus, expected) => {
+    vi.spyOn(api, 'get').mockResolvedValue({
+      data: { txid: 'txid-1', status: interStatus },
+    } as never);
+
+    const result = await getChargeByTxid('txid-1');
+
+    expect(result.status).toBe(expected);
+    expect(result.rawStatus).toBe(interStatus);
+  });
+
+  it('mapeia status desconhecido para UNKNOWN preservando rawStatus, nunca para PAID', async () => {
+    vi.spyOn(api, 'get').mockResolvedValue({
+      data: { txid: 'txid-1', status: 'ALGO_NOVO' },
+    } as never);
+
+    const result = await getChargeByTxid('txid-1');
+
+    expect(result.status).toBe('UNKNOWN');
+    expect(result.rawStatus).toBe('ALGO_NOVO');
   });
 });

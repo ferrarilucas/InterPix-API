@@ -1,21 +1,59 @@
-import { AxiosError } from 'axios';
+import axios, { AxiosError } from 'axios';
 import { api } from '../../shared/api';
 import { AppError } from '../../shared/errors';
 import { logger } from '../../shared/logger';
 import {
   ChargeResponse,
+  ChargeStatus,
   CreateChargeInput,
   CreateRecurrenceInput,
   RecurrenceResponse,
+  RecurrenceStatus,
 } from './types';
 
+const RECURRENCE_STATUS_MAP: Record<string, RecurrenceStatus> = {
+  CRIADA: 'CREATED',
+  ENVIADA: 'PENDING_AUTH',
+  RECEBIDA: 'PENDING_AUTH',
+  APROVADA: 'APPROVED',
+  ACEITA: 'APPROVED',
+  REJEITADA: 'DENIED',
+  EXPIRADA: 'DENIED',
+  CANCELADA: 'CANCELED',
+};
+
+const CHARGE_STATUS_MAP: Record<string, ChargeStatus> = {
+  CRIADA: 'CREATED',
+  ATIVA: 'CREATED',
+  CONCLUIDA: 'PAID',
+  EXPIRADA: 'FAILED',
+  REJEITADA: 'FAILED',
+  CANCELADA: 'CANCELED',
+};
+
+function mapRecurrenceStatus(raw: string): RecurrenceStatus {
+  return RECURRENCE_STATUS_MAP[raw] ?? 'UNKNOWN';
+}
+
+function mapChargeStatus(raw: string): ChargeStatus {
+  return CHARGE_STATUS_MAP[raw] ?? 'UNKNOWN';
+}
+
 function fail(operation: string, error: unknown): never {
-  const axiosError = error as AxiosError;
+  if (axios.isAxiosError(error)) {
+    const axiosError = error as AxiosError;
+    logger.error('falha na api do inter', {
+      operation,
+      status: axiosError.response?.status,
+      body: axiosError.response?.data,
+      message: axiosError.message,
+    });
+    throw AppError.upstream();
+  }
+
   logger.error('falha na api do inter', {
     operation,
-    status: axiosError.response?.status,
-    body: axiosError.response?.data,
-    message: axiosError.message,
+    message: error instanceof Error ? error.message : String(error),
   });
   throw AppError.upstream();
 }
@@ -51,9 +89,11 @@ function toRecurrenceBody(input: CreateRecurrenceInput): Record<string, unknown>
 function toRecurrence(data: Record<string, unknown>): RecurrenceResponse {
   const dadosQR = data.dadosQR as Record<string, unknown> | undefined;
   const loc = data.loc as Record<string, unknown> | undefined;
+  const rawStatus = String(data.status);
   return {
     recId: String(data.idRec),
-    status: String(data.status),
+    status: mapRecurrenceStatus(rawStatus),
+    rawStatus,
     solicrecId: data.idSolicRec ? String(data.idSolicRec) : undefined,
     pixCopyPaste: dadosQR?.pixCopiaECola ? String(dadosQR.pixCopiaECola) : undefined,
     url: loc?.location ? String(loc.location) : undefined,
@@ -72,9 +112,11 @@ function toChargeBody(input: CreateChargeInput): Record<string, unknown> {
 function toCharge(data: Record<string, unknown>): ChargeResponse {
   const pix = data.pix as Array<Record<string, unknown>> | undefined;
   const latestPix = pix && pix.length > 0 ? pix[pix.length - 1] : undefined;
+  const rawStatus = String(data.status);
   return {
     txid: String(data.txid),
-    status: String(data.status),
+    status: mapChargeStatus(rawStatus),
+    rawStatus,
     endToEndId: latestPix?.endToEndId
       ? String(latestPix.endToEndId)
       : data.endToEndId

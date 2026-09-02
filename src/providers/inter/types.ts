@@ -7,9 +7,18 @@ export interface CreateRecurrenceInput {
   planCode: string;
 }
 
+export type RecurrenceStatus =
+  | 'CREATED'
+  | 'PENDING_AUTH'
+  | 'APPROVED'
+  | 'DENIED'
+  | 'CANCELED'
+  | 'UNKNOWN';
+
 export interface RecurrenceResponse {
   recId: string;
-  status: string;
+  status: RecurrenceStatus;
+  rawStatus: string;
   solicrecId?: string;
   pixCopyPaste?: string;
   url?: string;
@@ -22,9 +31,12 @@ export interface CreateChargeInput {
   amount: string;
 }
 
+export type ChargeStatus = 'CREATED' | 'PAID' | 'FAILED' | 'CANCELED' | 'UNKNOWN';
+
 export interface ChargeResponse {
   txid: string;
-  status: string;
+  status: ChargeStatus;
+  rawStatus: string;
   endToEndId?: string;
   paidAt?: string;
   failureReason?: string;
