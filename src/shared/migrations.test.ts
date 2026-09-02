@@ -11,6 +11,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
+  await runMigrations(connectionString);
   await pool.end();
 });
 

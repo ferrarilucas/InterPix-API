@@ -19,12 +19,26 @@ export async function withTransaction<T>(fn: (client: PoolClient) => Promise<T>)
     await client.query('BEGIN');
     const result = await fn(client);
     await client.query('COMMIT');
+    client.release();
     return result;
   } catch (error) {
-    await client.query('ROLLBACK');
-    throw error;
-  } finally {
+    let rollbackError: unknown;
+    try {
+      await client.query('ROLLBACK');
+    } catch (err) {
+      rollbackError = err;
+    }
+
+    if (rollbackError !== undefined) {
+      client.release(rollbackError as Error);
+      if (error instanceof Error) {
+        (error as Error & { cause?: unknown }).cause = rollbackError;
+      }
+      throw error;
+    }
+
     client.release();
+    throw error;
   }
 }
 

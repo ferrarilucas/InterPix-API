@@ -34,12 +34,26 @@ export async function runMigrations(connectionString: string): Promise<string[]>
         await client.query(sql);
         await client.query('INSERT INTO schema_migrations (name) VALUES ($1)', [file]);
         await client.query('COMMIT');
+        client.release();
         executed.push(file);
       } catch (error) {
-        await client.query('ROLLBACK');
-        throw error;
-      } finally {
+        let rollbackError: unknown;
+        try {
+          await client.query('ROLLBACK');
+        } catch (err) {
+          rollbackError = err;
+        }
+
+        if (rollbackError !== undefined) {
+          client.release(rollbackError as Error);
+          if (error instanceof Error) {
+            (error as Error & { cause?: unknown }).cause = rollbackError;
+          }
+          throw error;
+        }
+
         client.release();
+        throw error;
       }
     }
 
