@@ -89,6 +89,19 @@ describe('logger', () => {
     expect(emitted.taxId).toBe('********901');
   });
 
+  it('permite referencia compartilhada nao ciclica', () => {
+    const spy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+
+    const shared = { taxId: '12345678901' };
+    logger.info('compartilhado', { a: shared, b: shared });
+
+    const emitted = JSON.parse(spy.mock.calls[0][0] as string);
+    expect(emitted.a.taxId).toBe('********901');
+    expect(emitted.b.taxId).toBe('********901');
+    expect(emitted.a.taxId).not.toBe('[Circular]');
+    expect(emitted.b.taxId).not.toBe('[Circular]');
+  });
+
   it('nao lanca erro com referencia circular', () => {
     const spy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
 

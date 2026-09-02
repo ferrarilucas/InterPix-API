@@ -15,7 +15,14 @@ function sanitize(value: unknown, visited = new WeakSet<object>()): unknown {
   }
 
   if (Array.isArray(value)) {
-    return value.map(item => sanitize(item, visited));
+    if (visited.has(value)) {
+      return '[Circular]';
+    }
+
+    visited.add(value);
+    const result = value.map(item => sanitize(item, visited));
+    visited.delete(value);
+    return result;
   }
 
   if (value !== null && typeof value === 'object') {
@@ -33,6 +40,8 @@ function sanitize(value: unknown, visited = new WeakSet<object>()): unknown {
         result[key] = sanitize(inner, visited);
       }
     }
+
+    visited.delete(value);
     return result;
   }
 
