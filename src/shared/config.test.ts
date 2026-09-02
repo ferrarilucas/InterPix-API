@@ -31,6 +31,31 @@ describe('loadConfig', () => {
     );
   });
 
+  it('aceita os limites inclusivos de chargeLeadDays (Bacen 2-10)', () => {
+    const config2 = loadConfig({ ...validEnv, CHARGE_LEAD_DAYS: '2' });
+    expect(config2.chargeLeadDays).toBe(2);
+
+    const config10 = loadConfig({ ...validEnv, CHARGE_LEAD_DAYS: '10' });
+    expect(config10.chargeLeadDays).toBe(10);
+  });
+
+  it('rejeita dunningWindowDays fora da janela permitida', () => {
+    expect(() => loadConfig({ ...validEnv, DUNNING_WINDOW_DAYS: '0' })).toThrow(
+      /DUNNING_WINDOW_DAYS/,
+    );
+    expect(() => loadConfig({ ...validEnv, DUNNING_WINDOW_DAYS: '8' })).toThrow(
+      /DUNNING_WINDOW_DAYS/,
+    );
+  });
+
+  it('aceita os limites inclusivos de dunningWindowDays (1-7)', () => {
+    const config1 = loadConfig({ ...validEnv, DUNNING_WINDOW_DAYS: '1' });
+    expect(config1.dunningWindowDays).toBe(1);
+
+    const config7 = loadConfig({ ...validEnv, DUNNING_WINDOW_DAYS: '7' });
+    expect(config7.dunningWindowDays).toBe(7);
+  });
+
   it('rejeita API_TOKEN curto demais', () => {
     expect(() => loadConfig({ ...validEnv, API_TOKEN: 'curto' })).toThrow(/API_TOKEN/);
   });
