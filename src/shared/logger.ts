@@ -9,18 +9,28 @@ export function maskTaxId(value: string): string {
   return '*'.repeat(value.length - 3) + value.slice(-3);
 }
 
-function sanitize(value: unknown): unknown {
+function sanitize(value: unknown, visited = new WeakSet<object>()): unknown {
+  if (value instanceof Date) {
+    return value.toISOString();
+  }
+
   if (Array.isArray(value)) {
-    return value.map(sanitize);
+    return value.map(item => sanitize(item, visited));
   }
 
   if (value !== null && typeof value === 'object') {
+    if (visited.has(value)) {
+      return '[Circular]';
+    }
+
+    visited.add(value);
+
     const result: Record<string, unknown> = {};
     for (const [key, inner] of Object.entries(value as Record<string, unknown>)) {
-      if (SENSITIVE_KEYS.has(key) && typeof inner === 'string') {
-        result[key] = maskTaxId(inner);
+      if (SENSITIVE_KEYS.has(key) && inner != null) {
+        result[key] = maskTaxId(String(inner));
       } else {
-        result[key] = sanitize(inner);
+        result[key] = sanitize(inner, visited);
       }
     }
     return result;

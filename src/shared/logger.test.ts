@@ -50,4 +50,59 @@ describe('logger', () => {
     const emitted = JSON.parse(spy.mock.calls[0][0] as string);
     expect(emitted.requestId).toBe('req-1');
   });
+
+  it('mascara taxId dentro de array de objetos', () => {
+    const spy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+
+    logger.info('devedores', { debtors: [{ taxId: '12345678901', name: 'Fulano' }] });
+
+    const emitted = JSON.parse(spy.mock.calls[0][0] as string);
+    expect(emitted.debtors[0].taxId).toBe('********901');
+    expect(emitted.debtors[0].name).toBe('Fulano');
+  });
+
+  it('mascara taxId em profundidade de tres ou mais niveis', () => {
+    const spy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+
+    logger.info('aninhado', { a: { b: { c: { taxId: '12345678901' } } } });
+
+    const emitted = JSON.parse(spy.mock.calls[0][0] as string);
+    expect(emitted.a.b.c.taxId).toBe('********901');
+  });
+
+  it('preserva Date em formato ISO', () => {
+    const spy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    const testDate = new Date('2026-09-02T10:30:00Z');
+
+    logger.info('evento', { settlementDate: testDate });
+
+    const emitted = JSON.parse(spy.mock.calls[0][0] as string);
+    expect(emitted.settlementDate).toBe('2026-09-02T10:30:00.000Z');
+  });
+
+  it('mascara campo sensivel com valor numerico', () => {
+    const spy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+
+    logger.info('numero', { taxId: 12345678901 });
+
+    const emitted = JSON.parse(spy.mock.calls[0][0] as string);
+    expect(emitted.taxId).toBe('********901');
+  });
+
+  it('nao lanca erro com referencia circular', () => {
+    const spy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+
+    const circular: Record<string, unknown> = { name: 'ciclo' };
+    circular.self = circular;
+
+    expect(() => {
+      logger.info('circular', circular);
+    }).not.toThrow();
+
+    const jsonStr = spy.mock.calls[0][0] as string;
+    expect(jsonStr).toContain('[Circular]');
+
+    const emitted = JSON.parse(jsonStr);
+    expect(emitted.name).toBe('ciclo');
+  });
 });
