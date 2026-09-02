@@ -185,10 +185,10 @@ Assinatura:
 ```
 PENDING_AUTH ──autorizada──> ACTIVE
 PENDING_AUTH ──negada/expirada──> AUTH_DENIED
+PENDING_AUTH|ACTIVE|PAST_DUE|SUSPENDED ──cancelamento──> CANCELED
 ACTIVE ──ciclo vence sem pagar──> PAST_DUE
 PAST_DUE ──pagamento em retentativa──> ACTIVE
 PAST_DUE ──7 dias sem pagar──> SUSPENDED
-ACTIVE|PAST_DUE|SUSPENDED ──cancelamento──> CANCELED
 ```
 
 Ciclo:
@@ -198,7 +198,9 @@ SCHEDULED ──cobr enviada (D-3)──> SENT
 SENT ──liquidado──> PAID
 SENT ──falha na data prevista──> FAILED
 FAILED ──nova instrução dentro dos 7 dias──> RETRYING
+FAILED ──janela expirada sem retentativa──> ABANDONED
 RETRYING ──liquidado──> PAID
+RETRYING ──falha na retentativa──> FAILED
 RETRYING ──esgotou a janela──> ABANDONED
 SCHEDULED|SENT ──cancelado até a véspera──> CANCELED
 ```

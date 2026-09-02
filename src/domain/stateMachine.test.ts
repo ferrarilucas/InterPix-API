@@ -23,6 +23,20 @@ describe('assertSubscriptionTransition', () => {
   it('permite transicao para o mesmo estado sem erro', () => {
     expect(() => assertSubscriptionTransition('ACTIVE', 'ACTIVE')).not.toThrow();
   });
+
+  it('recusa reativar assinatura suspensa', () => {
+    expect(() => assertSubscriptionTransition('SUSPENDED', 'ACTIVE')).toThrow(
+      /INVALID_TRANSITION|nao permitida/,
+    );
+  });
+
+  it('permite CANCELED voltar para si mesmo sem erro', () => {
+    expect(() => assertSubscriptionTransition('CANCELED', 'CANCELED')).not.toThrow();
+  });
+
+  it('permite AUTH_DENIED voltar para si mesmo sem erro', () => {
+    expect(() => assertSubscriptionTransition('AUTH_DENIED', 'AUTH_DENIED')).not.toThrow();
+  });
 });
 
 describe('assertCycleTransition', () => {
@@ -44,5 +58,13 @@ describe('assertCycleTransition', () => {
 
   it('recusa cancelar um ciclo ja abandonado', () => {
     expect(() => assertCycleTransition('ABANDONED', 'CANCELED')).toThrow();
+  });
+
+  it('permite PAID voltar para si mesmo sem erro', () => {
+    expect(() => assertCycleTransition('PAID', 'PAID')).not.toThrow();
+  });
+
+  it('permite ABANDONED voltar para si mesmo sem erro', () => {
+    expect(() => assertCycleTransition('ABANDONED', 'ABANDONED')).not.toThrow();
   });
 });
