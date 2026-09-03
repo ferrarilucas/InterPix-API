@@ -12,9 +12,11 @@ import {
 import {
   countCycleAttempts,
   findCurrentCycle,
+  findLatestCycleAttempt,
   insertCycle,
   insertCycleAttempt,
   listCyclesByStatus,
+  listCyclesByStatusInRange,
   listCyclesBySubscription,
   updateCycleStatus,
   updateCycleStatusIf,
@@ -22,11 +24,19 @@ import {
 import { insertEvent } from '../repositories/events';
 import { withTransaction } from '../shared/db';
 import {
+  addDays,
   addMonths,
+  businessToday,
+  isDunningWindowOver,
   isSendWindowMissed,
+  MAX_LEAD_DAYS,
   nextRetryDate,
   shouldSendCharge,
 } from '../domain/schedule';
+import { applyChargeStatus } from '../domain/chargeOutcome';
+
+const RECONCILE_GRACE_DAYS = 3;
+const MAX_RETRIES_PER_CYCLE = 3;
 import { assertCycleTransition, assertSubscriptionTransition } from '../domain/stateMachine';
 import { enqueueDelivery } from '../domain/webhookDispatcher';
 
@@ -165,9 +175,22 @@ export async function sendCharges(today: string): Promise<number> {
       continue;
     }
 
+    if (subscription.status !== 'ACTIVE') {
+      logger.warn('ciclo ignorado: assinatura nao esta ativa', {
+        cycleId: cycle.id,
+        subscriptionId: subscription.id,
+        status: subscription.status,
+      });
+      continue;
+    }
+
     const txid = cycle.interTxid ?? newTxid();
 
     try {
+      if (!cycle.interTxid) {
+        await updateCycleStatus(cycle.id, cycle.status, { interTxid: txid });
+      }
+
       await inter.createCharge({
         recId: subscription.interRecId,
         txid,
@@ -176,7 +199,7 @@ export async function sendCharges(today: string): Promise<number> {
       });
 
       assertCycleTransition(cycle.status, 'SENT');
-      await updateCycleStatus(cycle.id, 'SENT', { interTxid: txid });
+      await updateCycleStatus(cycle.id, 'SENT');
       await insertCycleAttempt({
         cycleId: cycle.id,
         attemptNumber: 1,
@@ -217,6 +240,25 @@ export async function retryFailed(today: string): Promise<number> {
       continue;
     }
 
+    if (subscription.status !== 'ACTIVE' && subscription.status !== 'PAST_DUE') {
+      logger.warn('retentativa ignorada: assinatura nao esta ativa nem inadimplente', {
+        cycleId: cycle.id,
+        subscriptionId: subscription.id,
+        status: subscription.status,
+      });
+      continue;
+    }
+
+    const attempts = await countCycleAttempts(cycle.id);
+
+    if (Math.max(attempts - 1, 0) >= MAX_RETRIES_PER_CYCLE) {
+      logger.warn('retentativa ignorada: limite de tentativas atingido', {
+        cycleId: cycle.id,
+        attempts,
+      });
+      continue;
+    }
+
     try {
       await inter.createCharge({
         recId: subscription.interRecId,
@@ -228,7 +270,6 @@ export async function retryFailed(today: string): Promise<number> {
       assertCycleTransition(cycle.status, 'RETRYING');
       await updateCycleStatus(cycle.id, 'RETRYING');
 
-      const attempts = await countCycleAttempts(cycle.id);
       await insertCycleAttempt({
         cycleId: cycle.id,
         attemptNumber: attempts + 1,
@@ -268,38 +309,80 @@ export async function expireOverdue(today: string): Promise<number> {
   let expired = 0;
 
   for (const cycle of cycles) {
-    if (nextRetryDate(cycle.dueDate, today, config.dunningWindowDays)) {
+    if (!isDunningWindowOver(cycle.dueDate, today, config.dunningWindowDays)) {
+      continue;
+    }
+
+    const latestAttempt = await findLatestCycleAttempt(cycle.id);
+
+    if (latestAttempt && latestAttempt.scheduledFor >= today) {
+      logger.info('ciclo mantido: ainda ha liquidacao prevista', {
+        cycleId: cycle.id,
+        scheduledFor: latestAttempt.scheduledFor,
+      });
       continue;
     }
 
     try {
       assertCycleTransition(cycle.status, 'ABANDONED');
-      await updateCycleStatus(cycle.id, 'ABANDONED');
 
       const subscription = await findSubscriptionById(cycle.subscriptionId);
+      const toSuspend =
+        subscription && ['ACTIVE', 'PAST_DUE'].includes(subscription.status) ? subscription : null;
 
-      if (subscription && ['ACTIVE', 'PAST_DUE'].includes(subscription.status)) {
-        if (subscription.status === 'ACTIVE') {
-          assertSubscriptionTransition(subscription.status, 'PAST_DUE');
-          await updateSubscriptionStatus(subscription.id, 'PAST_DUE');
+      if (toSuspend?.interRecId) {
+        try {
+          await inter.cancelRecurrence(toSuspend.interRecId);
+        } catch (error) {
+          logger.error('falha ao cancelar recorrencia da assinatura suspensa', {
+            subscriptionId: toSuspend.id,
+            message: (error as Error).message,
+          });
         }
-
-        assertSubscriptionTransition('PAST_DUE', 'SUSPENDED');
-        await updateSubscriptionStatus(subscription.id, 'SUSPENDED');
-
-        const event = await insertEvent({
-          subscriptionId: subscription.id,
-          cycleId: cycle.id,
-          type: 'subscription.suspended',
-          payload: { cycleSeq: cycle.seq },
-        });
-        await enqueueDelivery(event.id, 'subscription.suspended', {
-          subscriptionId: subscription.id,
-          externalUserId: subscription.externalUserId,
-        });
       }
 
-      expired += 1;
+      const applied = await withTransaction(async (client) => {
+        const updated = await updateCycleStatusIf(cycle.id, cycle.status, 'ABANDONED', {}, client);
+
+        if (!updated) {
+          return false;
+        }
+
+        if (toSuspend) {
+          if (toSuspend.status === 'ACTIVE') {
+            assertSubscriptionTransition(toSuspend.status, 'PAST_DUE');
+            await updateSubscriptionStatus(toSuspend.id, 'PAST_DUE', {}, client);
+          }
+
+          assertSubscriptionTransition('PAST_DUE', 'SUSPENDED');
+          await updateSubscriptionStatus(toSuspend.id, 'SUSPENDED', {}, client);
+
+          const event = await insertEvent(
+            {
+              subscriptionId: toSuspend.id,
+              cycleId: cycle.id,
+              type: 'subscription.suspended',
+              payload: { cycleSeq: cycle.seq },
+            },
+            client,
+          );
+          await enqueueDelivery(
+            event.id,
+            'subscription.suspended',
+            {
+              subscriptionId: toSuspend.id,
+              externalUserId: toSuspend.externalUserId,
+            },
+            client,
+          );
+        }
+
+        return true;
+      });
+
+      if (applied) {
+        expired += 1;
+      }
     } catch (error) {
       logger.error('falha ao expirar ciclo', {
         cycleId: cycle.id,
@@ -311,8 +394,10 @@ export async function expireOverdue(today: string): Promise<number> {
   return expired;
 }
 
-async function reconcileCycles(): Promise<number> {
-  const cycles = await listCyclesByStatus(['SENT', 'RETRYING']);
+async function reconcileCycles(today: string): Promise<number> {
+  const from = addDays(today, -(config.dunningWindowDays + RECONCILE_GRACE_DAYS));
+  const to = addDays(today, MAX_LEAD_DAYS);
+  const cycles = await listCyclesByStatusInRange(['SENT', 'RETRYING'], from, to);
   let checked = 0;
 
   for (const cycle of cycles) {
@@ -322,27 +407,7 @@ async function reconcileCycles(): Promise<number> {
 
     try {
       const charge = await inter.getChargeByTxid(cycle.interTxid);
-
-      if (charge.status === 'PAID') {
-        assertCycleTransition(cycle.status, 'PAID');
-        await updateCycleStatus(cycle.id, 'PAID', {
-          endToEndId: charge.endToEndId,
-          paidAt: charge.paidAt ?? new Date().toISOString(),
-        });
-
-        const event = await insertEvent({
-          subscriptionId: cycle.subscriptionId,
-          cycleId: cycle.id,
-          type: 'cycle.paid',
-          payload: { txid: cycle.interTxid, source: 'reconcile' },
-        });
-        await enqueueDelivery(event.id, 'cycle.paid', {
-          subscriptionId: cycle.subscriptionId,
-          cycleSeq: cycle.seq,
-          amount: cycle.amount,
-        });
-      }
-
+      await applyChargeStatus(cycle, charge);
       checked += 1;
     } catch (error) {
       logger.error('falha na reconciliacao', {
@@ -420,8 +485,8 @@ async function reconcilePendingAuth(): Promise<number> {
   return checked;
 }
 
-export async function reconcile(): Promise<number> {
-  const cyclesChecked = await reconcileCycles();
+export async function reconcile(today: string = businessToday()): Promise<number> {
+  const cyclesChecked = await reconcileCycles(today);
   const subscriptionsChecked = await reconcilePendingAuth();
   return cyclesChecked + subscriptionsChecked;
 }

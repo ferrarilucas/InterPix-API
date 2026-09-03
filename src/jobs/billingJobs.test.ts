@@ -44,6 +44,7 @@ beforeEach(() => {
     status: 'CREATED',
     rawStatus: 'CRIADA',
   });
+  vi.spyOn(inter, 'cancelRecurrence').mockResolvedValue(undefined);
 });
 
 afterEach(() => {
@@ -324,7 +325,7 @@ describe('reconcile', () => {
     });
     await updateCycleStatus(cycle.id, 'SENT', { interTxid: txid });
 
-    await reconcile();
+    await reconcile('2026-11-05');
 
     expect((await findCycleById(cycle.id))?.status).toBe('PAID');
   });
@@ -347,7 +348,7 @@ describe('reconcile', () => {
     });
     await updateCycleStatus(cycle.id, 'SENT', { interTxid: txid });
 
-    await reconcile();
+    await reconcile('2026-11-06');
 
     expect((await findCycleById(cycle.id))?.status).toBe('SENT');
   });
