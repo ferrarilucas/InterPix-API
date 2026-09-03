@@ -5,9 +5,14 @@ import {
   insertSubscription,
   updateSubscriptionStatus,
 } from '../repositories/subscriptions';
-import { listCyclesBySubscription } from '../repositories/cycles';
+import {
+  findCurrentCycle,
+  listCyclesBySubscription,
+  updateCycleStatus,
+} from '../repositories/cycles';
 import { insertEvent } from '../repositories/events';
-import { assertSubscriptionTransition } from './stateMachine';
+import { assertCycleTransition, assertSubscriptionTransition } from './stateMachine';
+import { businessToday, canCancelCycle } from './schedule';
 import { Cycle, Subscription } from './types';
 
 export interface CreateSubscriptionInput {
@@ -83,4 +88,49 @@ export async function getSubscriptionDetail(
 
   const cycles = await listCyclesBySubscription(id);
   return { subscription, cycles };
+}
+
+export async function cancelSubscription(
+  id: string,
+  today: string = businessToday(),
+): Promise<{ subscription: Subscription; pendingCycle: Cycle | null }> {
+  const subscription = await findSubscriptionById(id);
+
+  if (!subscription) {
+    throw AppError.notFound('Assinatura');
+  }
+
+  if (subscription.status === 'CANCELED') {
+    throw AppError.conflict('INVALID_TRANSITION', 'Assinatura ja esta cancelada.');
+  }
+
+  assertSubscriptionTransition(subscription.status, 'CANCELED');
+
+  const current = await findCurrentCycle(id);
+  let pendingCycle: Cycle | null = null;
+
+  if (current && ['SCHEDULED', 'SENT', 'FAILED', 'RETRYING'].includes(current.status)) {
+    if (canCancelCycle(current.dueDate, today)) {
+      assertCycleTransition(current.status, 'CANCELED');
+      await updateCycleStatus(current.id, 'CANCELED');
+    } else {
+      pendingCycle = current;
+    }
+  }
+
+  if (subscription.interRecId) {
+    await inter.cancelRecurrence(subscription.interRecId);
+  }
+
+  const updated = await updateSubscriptionStatus(id, 'CANCELED', {
+    canceledAt: new Date().toISOString(),
+  });
+
+  await insertEvent({
+    subscriptionId: id,
+    type: 'subscription.canceled',
+    payload: { pendingCycleId: pendingCycle?.id ?? null },
+  });
+
+  return { subscription: updated, pendingCycle };
 }

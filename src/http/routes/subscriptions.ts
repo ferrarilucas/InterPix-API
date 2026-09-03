@@ -1,7 +1,11 @@
 import { NextFunction, Request, Response, Router } from 'express';
 import { z } from 'zod';
 import { AppError } from '../../shared/errors';
-import { createSubscription, getSubscriptionDetail } from '../../domain/subscriptionService';
+import {
+  cancelSubscription,
+  createSubscription,
+  getSubscriptionDetail,
+} from '../../domain/subscriptionService';
 import { businessToday } from '../../domain/schedule';
 
 const createSchema = z.object({
@@ -74,6 +78,27 @@ export function subscriptionRoutes(): Router {
           status: cycle.status,
           paidAt: cycle.paidAt,
         })),
+      });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.post('/:id/cancel', async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const result = await cancelSubscription(req.params.id);
+      res.status(200).json({
+        id: result.subscription.id,
+        status: result.subscription.status,
+        canceledAt: result.subscription.canceledAt,
+        pendingCycle: result.pendingCycle
+          ? {
+              seq: result.pendingCycle.seq,
+              dueDate: result.pendingCycle.dueDate,
+              status: result.pendingCycle.status,
+              note: 'Cobranca ja enviada; nao pode ser cancelada e seguira seu curso.',
+            }
+          : null,
       });
     } catch (error) {
       next(error);
