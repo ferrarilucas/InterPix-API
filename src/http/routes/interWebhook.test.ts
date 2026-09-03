@@ -7,8 +7,11 @@ import * as inter from '../../providers/inter/pixAutomatico';
 import { createSubscription as createFixture } from '../../test/factories';
 import { insertCycle, findCycleById, updateCycleStatus } from '../../repositories/cycles';
 import { updateSubscriptionStatus, findSubscriptionById } from '../../repositories/subscriptions';
+import * as webhookDispatcher from '../../domain/webhookDispatcher';
+import { logger } from '../../shared/logger';
 
 const app = createApp();
+const WAIT_FOR_OPTS = { timeout: 2000, interval: 20 };
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -49,10 +52,12 @@ describe('POST /webhooks/inter', () => {
       .post('/webhooks/inter')
       .send({ txid, status: 'MENTIRA_DO_ATACANTE' });
 
-    expect(getCharge).toHaveBeenCalledWith(txid);
-    const updated = await findCycleById(cycle.id);
-    expect(updated?.status).toBe('PAID');
-    expect(updated?.endToEndId).toBe('E1');
+    await vi.waitFor(async () => {
+      expect(getCharge).toHaveBeenCalledWith(txid);
+      const updated = await findCycleById(cycle.id);
+      expect(updated?.status).toBe('PAID');
+      expect(updated?.endToEndId).toBe('E1');
+    }, WAIT_FOR_OPTS);
   });
 
   it('ignora corpo que diz pago quando o Inter diz que nao foi', async () => {
@@ -77,8 +82,10 @@ describe('POST /webhooks/inter', () => {
 
     await request(app).post('/webhooks/inter').send({ txid, status: 'PAID' });
 
-    const updated = await findCycleById(cycle.id);
-    expect(updated?.status).toBe('FAILED');
+    await vi.waitFor(async () => {
+      const updated = await findCycleById(cycle.id);
+      expect(updated?.status).toBe('FAILED');
+    }, WAIT_FOR_OPTS);
   });
 
   it('nao faz nada quando o status retornado pelo Inter e desconhecido', async () => {
@@ -94,7 +101,7 @@ describe('POST /webhooks/inter', () => {
     });
     await updateCycleStatus(cycle.id, 'SENT', { interTxid: txid });
 
-    vi.spyOn(inter, 'getChargeByTxid').mockResolvedValue({
+    const getCharge = vi.spyOn(inter, 'getChargeByTxid').mockResolvedValue({
       txid,
       status: 'UNKNOWN',
       rawStatus: 'ALGO_NOVO',
@@ -102,8 +109,49 @@ describe('POST /webhooks/inter', () => {
 
     await request(app).post('/webhooks/inter').send({ txid, status: 'PAID' });
 
+    await vi.waitFor(async () => {
+      expect(getCharge).toHaveBeenCalledWith(txid);
+    }, WAIT_FOR_OPTS);
+
     const updated = await findCycleById(cycle.id);
     expect(updated?.status).toBe('SENT');
+
+    const untouchedSubscription = await findSubscriptionById(subscription.id);
+    expect(untouchedSubscription?.status).toBe('ACTIVE');
+  });
+
+  it('nao faz nada quando a cobranca ainda esta apenas criada (nao vencida)', async () => {
+    const subscription = await createFixture();
+    const recId = randomUUID();
+    const txid = randomUUID();
+    await updateSubscriptionStatus(subscription.id, 'ACTIVE', { interRecId: recId });
+    const cycle = await insertCycle({
+      subscriptionId: subscription.id,
+      seq: 1,
+      dueDate: '2026-09-20',
+      amount: '29.90',
+    });
+    await updateCycleStatus(cycle.id, 'SENT', { interTxid: txid });
+
+    const getCharge = vi.spyOn(inter, 'getChargeByTxid').mockResolvedValue({
+      txid,
+      status: 'CREATED',
+      rawStatus: 'ATIVA',
+    });
+    const enqueueDelivery = vi.spyOn(webhookDispatcher, 'enqueueDelivery');
+
+    await request(app).post('/webhooks/inter').send({ txid, status: 'PAID' });
+
+    await vi.waitFor(async () => {
+      expect(getCharge).toHaveBeenCalledWith(txid);
+    }, WAIT_FOR_OPTS);
+
+    const updated = await findCycleById(cycle.id);
+    expect(updated?.status).toBe('SENT');
+
+    const untouchedSubscription = await findSubscriptionById(subscription.id);
+    expect(untouchedSubscription?.status).toBe('ACTIVE');
+    expect(enqueueDelivery).not.toHaveBeenCalled();
   });
 
   it('e idempotente: o mesmo evento duas vezes nao duplica efeito', async () => {
@@ -129,6 +177,12 @@ describe('POST /webhooks/inter', () => {
 
     const body = { txid, eventId: randomUUID() };
     await request(app).post('/webhooks/inter').send(body);
+
+    await vi.waitFor(async () => {
+      const updated = await findCycleById(cycle.id);
+      expect(updated?.status).toBe('PAID');
+    }, WAIT_FOR_OPTS);
+
     await request(app).post('/webhooks/inter').send(body);
 
     expect(getCharge).toHaveBeenCalledTimes(1);
@@ -149,9 +203,11 @@ describe('POST /webhooks/inter', () => {
       .post('/webhooks/inter')
       .send({ idRec: recId, eventId: randomUUID() });
 
-    const updated = await findSubscriptionById(subscription.id);
-    expect(updated?.status).toBe('ACTIVE');
-    expect(updated?.authorizedAt).toBeTruthy();
+    await vi.waitFor(async () => {
+      const updated = await findSubscriptionById(subscription.id);
+      expect(updated?.status).toBe('ACTIVE');
+      expect(updated?.authorizedAt).toBeTruthy();
+    }, WAIT_FOR_OPTS);
   });
 
   it('responde 200 mesmo quando o processamento falha, para o Inter nao reenviar em loop', async () => {
@@ -168,11 +224,16 @@ describe('POST /webhooks/inter', () => {
     await updateCycleStatus(cycle.id, 'SENT', { interTxid: txid });
 
     vi.spyOn(inter, 'getChargeByTxid').mockRejectedValue(new Error('inter fora do ar'));
+    const logError = vi.spyOn(logger, 'error').mockImplementation(() => {});
 
     const response = await request(app)
       .post('/webhooks/inter')
       .send({ txid, eventId: randomUUID() });
 
     expect(response.status).toBe(200);
+
+    await vi.waitFor(() => {
+      expect(logError).toHaveBeenCalled();
+    }, WAIT_FOR_OPTS);
   });
 });
