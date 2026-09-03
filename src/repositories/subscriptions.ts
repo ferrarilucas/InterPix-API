@@ -128,6 +128,37 @@ export async function updateSubscriptionStatus(
   return toDomain(rows[0]);
 }
 
+export async function updateSubscriptionStatusIf(
+  id: string,
+  expectedStatus: SubscriptionStatus,
+  status: SubscriptionStatus,
+  patch: SubscriptionPatch = {},
+): Promise<Subscription | null> {
+  const rows = await query<SubscriptionRow>(
+    `UPDATE subscriptions SET
+       status = $3,
+       inter_rec_id = COALESCE($4, inter_rec_id),
+       inter_solicrec_id = COALESCE($5, inter_solicrec_id),
+       next_due_date = COALESCE($6, next_due_date),
+       authorized_at = COALESCE($7, authorized_at),
+       canceled_at = COALESCE($8, canceled_at),
+       updated_at = now()
+     WHERE id = $1 AND status = $2
+     RETURNING *`,
+    [
+      id,
+      expectedStatus,
+      status,
+      patch.interRecId ?? null,
+      patch.interSolicrecId ?? null,
+      patch.nextDueDate ?? null,
+      patch.authorizedAt ?? null,
+      patch.canceledAt ?? null,
+    ],
+  );
+  return rows[0] ? toDomain(rows[0]) : null;
+}
+
 export async function listActiveSubscriptionsDueFor(date: string): Promise<Subscription[]> {
   const rows = await query<SubscriptionRow>(
     `SELECT * FROM subscriptions

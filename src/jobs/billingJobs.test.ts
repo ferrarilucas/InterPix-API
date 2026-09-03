@@ -10,7 +10,11 @@ import {
   listCyclesBySubscription,
   updateCycleStatus,
 } from '../repositories/cycles';
+import { listEventsBySubscription } from '../repositories/events';
 import { findSubscriptionById, updateSubscriptionStatus } from '../repositories/subscriptions';
+import * as subscriptionsRepo from '../repositories/subscriptions';
+import * as cyclesRepo from '../repositories/cycles';
+import * as webhookDispatcher from '../domain/webhookDispatcher';
 import {
   expireOverdue,
   generateCycles,
@@ -73,6 +77,23 @@ describe('generateCycles', () => {
 
     const thirdCycle = (await listCyclesBySubscription(subscription.id))[2];
     expect(thirdCycle.dueDate).toBe('2026-03-31');
+  });
+
+  it('continua para as demais assinaturas quando uma falha no meio do lote', async () => {
+    const subscriptionA = await createFixture({ nextDueDate: '2026-04-10' });
+    await updateSubscriptionStatus(subscriptionA.id, 'ACTIVE', { interRecId: randomUUID() });
+    const subscriptionB = await createFixture({ nextDueDate: '2026-04-11' });
+    await updateSubscriptionStatus(subscriptionB.id, 'ACTIVE', { interRecId: randomUUID() });
+
+    vi.spyOn(cyclesRepo, 'insertCycle').mockImplementationOnce(() => {
+      throw new Error('falha simulada na primeira assinatura');
+    });
+
+    const created = await generateCycles('2026-04-11');
+
+    expect(created).toBe(1);
+    expect(await listCyclesBySubscription(subscriptionA.id)).toHaveLength(0);
+    expect(await listCyclesBySubscription(subscriptionB.id)).toHaveLength(1);
   });
 });
 
@@ -265,6 +286,34 @@ describe('reconcile', () => {
     await reconcile();
 
     expect((await findSubscriptionById(subscription.id))?.status).toBe('AUTH_DENIED');
+  });
+
+  it('nao entrega evento duplicado quando a assinatura ja foi aprovada por outro caminho antes da escrita', async () => {
+    const recId = randomUUID();
+    const subscription = await createFixture({ nextDueDate: '2026-11-09' });
+    await updateSubscriptionStatus(subscription.id, 'PENDING_AUTH', { interRecId: recId });
+    const staleSnapshot = await findSubscriptionById(subscription.id);
+
+    await updateSubscriptionStatus(subscription.id, 'ACTIVE', {
+      authorizedAt: new Date().toISOString(),
+    });
+
+    vi.spyOn(subscriptionsRepo, 'listPendingAuthWithRecId').mockResolvedValueOnce([
+      staleSnapshot!,
+    ]);
+    vi.spyOn(inter, 'getRecurrence').mockResolvedValue({
+      recId,
+      status: 'APPROVED',
+      rawStatus: 'APROVADA',
+    });
+    const enqueueSpy = vi.spyOn(webhookDispatcher, 'enqueueDelivery');
+
+    await reconcile();
+
+    expect(enqueueSpy).not.toHaveBeenCalled();
+    const events = await listEventsBySubscription(subscription.id);
+    expect(events.filter((event) => event.type === 'subscription.authorized')).toHaveLength(0);
+    expect((await findSubscriptionById(subscription.id))?.status).toBe('ACTIVE');
   });
 });
 
