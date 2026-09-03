@@ -246,11 +246,28 @@ describe('cancelUnsendableCycles', () => {
       amount: '29.90',
     });
 
-    const canceled = await cancelUnsendableCycles('2026-11-30');
+    await cancelUnsendableCycles('2026-11-30');
 
-    expect(canceled).toBeGreaterThanOrEqual(1);
     expect((await findCycleById(cycle.id))?.status).toBe('CANCELED');
     expect(await listDeliveredEventTypes(subscription.id)).toContain('cycle.failed');
+  });
+
+  it('nao varre ciclo de assinatura fora de ACTIVE ou PAST_DUE', async () => {
+    const subscription = await createFixture({ nextDueDate: '2026-12-04' });
+    await updateSubscriptionStatus(subscription.id, 'ACTIVE', { interRecId: randomUUID() });
+    const cycle = await insertCycle({
+      subscriptionId: subscription.id,
+      seq: 1,
+      dueDate: '2026-12-04',
+      amount: '29.90',
+    });
+    await updateSubscriptionStatus(subscription.id, 'PAST_DUE');
+    await updateSubscriptionStatus(subscription.id, 'SUSPENDED');
+
+    await cancelUnsendableCycles('2026-12-03');
+
+    expect((await findCycleById(cycle.id))?.status).toBe('SCHEDULED');
+    expect(await listDeliveredEventTypes(subscription.id)).not.toContain('cycle.failed');
   });
 
   it('nao toca em ciclo que ainda pode ser enviado', async () => {

@@ -7,7 +7,7 @@ import {
 } from '../repositories/cycles';
 import { updateSubscriptionStatusIf } from '../repositories/subscriptions';
 import { insertEvent } from '../repositories/events';
-import { assertCycleTransition, assertSubscriptionTransition } from './stateMachine';
+import { assertCycleTransition } from './stateMachine';
 import { enqueueDelivery } from './webhookDispatcher';
 import { Cycle } from './types';
 
@@ -19,7 +19,6 @@ async function applyPaid(cycle: Cycle, charge: ChargeResponse): Promise<ChargeOu
   }
 
   assertCycleTransition(cycle.status, 'PAID');
-  assertSubscriptionTransition('PAST_DUE', 'ACTIVE');
 
   const paidAt = charge.paidAt ?? new Date().toISOString();
 

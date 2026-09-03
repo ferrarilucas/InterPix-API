@@ -11,17 +11,25 @@ import {
   findCycleById,
   insertCycle,
   insertCycleAttempt,
-  listCyclesByStatus,
-  listCyclesByStatusInRange,
   listCyclesBySubscription,
   updateCycleStatus,
 } from '../repositories/cycles';
 import { findSubscriptionById, updateSubscriptionStatus } from '../repositories/subscriptions';
 import { applyChargeStatus } from '../domain/chargeOutcome';
-import { addDays, MAX_LEAD_DAYS } from '../domain/schedule';
+import { addDays } from '../domain/schedule';
 import { config } from '../shared/config';
-import { Cycle, CycleStatus } from '../domain/types';
-import { expireOverdue, generateCycles, reconcile, retryFailed, sendCharges } from './billingJobs';
+import { CycleStatus } from '../domain/types';
+import {
+  cancelUnsendableCycles,
+  escalateStaleCycles,
+  expireOverdue,
+  generateCycles,
+  reconcile,
+  retryFailed,
+  sendCharges,
+} from './billingJobs';
+
+const RECONCILE_GRACE_DAYS = 3;
 
 beforeEach(() => {
   vi.spyOn(inter, 'getRecurrence').mockResolvedValue({
@@ -103,47 +111,64 @@ describe('ciclo de vida completo atravessando varios jobs', () => {
 
 describe('nenhum status nao-terminal fica invisivel para os jobs', () => {
   const today = '2027-08-10';
-  const dueDate = '2027-08-12';
+  const reconcileFloor = addDays(today, -(config.dunningWindowDays + RECONCILE_GRACE_DAYS));
   const nonTerminal: CycleStatus[] = ['SCHEDULED', 'SENT', 'FAILED', 'RETRYING'];
+  const dueDateVariants = [
+    { label: 'dentro da faixa da reconciliacao', dueDate: addDays(today, 3) },
+    { label: 'antes do limite inferior da reconciliacao', dueDate: addDays(reconcileFloor, -5) },
+  ];
 
-  async function jobQueries(): Promise<Cycle[][]> {
-    return Promise.all([
-      listCyclesByStatus(['SCHEDULED']),
-      listCyclesByStatus(['FAILED']),
-      listCyclesByStatus(['FAILED', 'RETRYING']),
-      listCyclesByStatusInRange(
-        ['SENT', 'RETRYING'],
-        addDays(today, -(config.dunningWindowDays + 3)),
-        addDays(today, MAX_LEAD_DAYS),
-      ),
-    ]);
+  async function runEveryJob(date: string): Promise<void> {
+    await cancelUnsendableCycles(date);
+    await sendCharges(date);
+    await retryFailed(date);
+    await escalateStaleCycles(date);
+    await expireOverdue(date);
+    await reconcile(date);
   }
 
   for (const status of nonTerminal) {
-    it(`algum job enxerga um ciclo em ${status}`, async () => {
-      const subscription = await createFixture({ nextDueDate: dueDate });
-      await updateSubscriptionStatus(subscription.id, 'ACTIVE', { interRecId: randomUUID() });
-      const cycle = await insertCycle({
-        subscriptionId: subscription.id,
-        seq: 1,
-        dueDate,
-        amount: '29.90',
+    for (const variant of dueDateVariants) {
+      it(`algum job resolve um ciclo em ${status} com vencimento ${variant.label}`, async () => {
+        const txid = randomUUID();
+        const subscription = await createFixture({ nextDueDate: variant.dueDate });
+        await updateSubscriptionStatus(subscription.id, 'ACTIVE', { interRecId: randomUUID() });
+        const cycle = await insertCycle({
+          subscriptionId: subscription.id,
+          seq: 1,
+          dueDate: variant.dueDate,
+          amount: '29.90',
+        });
+
+        if (status !== 'SCHEDULED') {
+          await updateCycleStatus(cycle.id, 'SENT', { interTxid: txid });
+        }
+        if (status === 'FAILED' || status === 'RETRYING') {
+          await updateCycleStatus(cycle.id, 'FAILED');
+        }
+        if (status === 'RETRYING') {
+          await updateCycleStatus(cycle.id, 'RETRYING');
+        }
+
+        vi.spyOn(inter, 'getChargeByTxid').mockImplementation(async (requested) =>
+          requested === txid
+            ? {
+                txid,
+                status: 'PAID',
+                rawStatus: 'CONCLUIDA',
+                endToEndId: 'E-invisivel',
+                paidAt: `${today}T10:00:00Z`,
+              }
+            : { txid: requested, status: 'UNKNOWN', rawStatus: 'INERTE' },
+        );
+
+        await runEveryJob(today);
+
+        const after = await findCycleById(cycle.id);
+        expect(after?.status).not.toBe(status);
+        expect(['PAID', 'CANCELED', 'ABANDONED', 'SENT', 'RETRYING']).toContain(after?.status);
       });
-
-      if (status !== 'SCHEDULED') {
-        await updateCycleStatus(cycle.id, 'SENT', { interTxid: randomUUID() });
-      }
-      if (status === 'FAILED' || status === 'RETRYING') {
-        await updateCycleStatus(cycle.id, 'FAILED');
-      }
-      if (status === 'RETRYING') {
-        await updateCycleStatus(cycle.id, 'RETRYING');
-      }
-
-      const results = await jobQueries();
-      const seen = results.some((rows) => rows.some((row) => row.id === cycle.id));
-      expect(seen).toBe(true);
-    });
+    }
   }
 });
 

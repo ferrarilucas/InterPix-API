@@ -12,6 +12,7 @@ import {
 import { insertCycle, findCycleById, updateCycleStatus } from '../../repositories/cycles';
 import { updateSubscriptionStatus, findSubscriptionById } from '../../repositories/subscriptions';
 import * as webhookDispatcher from '../../domain/webhookDispatcher';
+import * as webhookReceipts from '../../repositories/webhookReceipts';
 import { logger } from '../../shared/logger';
 
 const app = createApp();
@@ -212,6 +213,41 @@ describe('POST /webhooks/inter', () => {
       expect(updated?.status).toBe('ACTIVE');
       expect(updated?.authorizedAt).toBeTruthy();
     }, WAIT_FOR_OPTS);
+  });
+
+  it('nao entrega subscription.authorized duas vezes quando o Inter reenvia o mesmo evento', async () => {
+    const subscription = await createFixture();
+    const recId = randomUUID();
+    const eventId = randomUUID();
+    await updateSubscriptionStatus(subscription.id, 'PENDING_AUTH', { interRecId: recId });
+
+    vi.spyOn(inter, 'getRecurrence').mockResolvedValue({
+      recId,
+      status: 'APPROVED',
+      rawStatus: 'APROVADA',
+    });
+    const markProcessed = vi
+      .spyOn(webhookReceipts, 'markReceiptProcessed')
+      .mockRejectedValueOnce(new Error('queda antes de marcar o recibo'));
+    vi.spyOn(logger, 'error').mockImplementation(() => {});
+
+    await request(app).post('/webhooks/inter').send({ idRec: recId, eventId });
+
+    await vi.waitFor(async () => {
+      expect((await findSubscriptionById(subscription.id))?.status).toBe('ACTIVE');
+    }, WAIT_FOR_OPTS);
+
+    await request(app).post('/webhooks/inter').send({ idRec: recId, eventId });
+
+    await vi.waitFor(() => {
+      expect(markProcessed).toHaveBeenCalledTimes(2);
+    }, WAIT_FOR_OPTS);
+
+    expect(
+      (await listDeliveredEventTypes(subscription.id)).filter(
+        (type) => type === 'subscription.authorized',
+      ),
+    ).toHaveLength(1);
   });
 
   it('responde 200 mesmo quando o processamento falha, para o Inter nao reenviar em loop', async () => {

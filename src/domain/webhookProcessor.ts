@@ -4,7 +4,7 @@ import { logger } from '../shared/logger';
 import { findCycleByTxid } from '../repositories/cycles';
 import {
   findSubscriptionByRecId,
-  updateSubscriptionStatus,
+  updateSubscriptionStatusIf,
 } from '../repositories/subscriptions';
 import { insertEvent } from '../repositories/events';
 import { insertReceipt, markReceiptProcessed } from '../repositories/webhookReceipts';
@@ -47,11 +47,15 @@ async function processRecurrence(recId: string): Promise<void> {
 
   const recurrence = await inter.getRecurrence(recId);
 
-  if (recurrence.status === 'APPROVED') {
+  if (recurrence.status === 'APPROVED' && subscription.status === 'PENDING_AUTH') {
     assertSubscriptionTransition(subscription.status, 'ACTIVE');
-    await updateSubscriptionStatus(subscription.id, 'ACTIVE', {
+    const updated = await updateSubscriptionStatusIf(subscription.id, 'PENDING_AUTH', 'ACTIVE', {
       authorizedAt: new Date().toISOString(),
     });
+
+    if (!updated) {
+      return;
+    }
 
     const event = await insertEvent({
       subscriptionId: subscription.id,
@@ -67,7 +71,11 @@ async function processRecurrence(recId: string): Promise<void> {
 
   if (recurrence.status === 'DENIED' && subscription.status === 'PENDING_AUTH') {
     assertSubscriptionTransition(subscription.status, 'AUTH_DENIED');
-    await updateSubscriptionStatus(subscription.id, 'AUTH_DENIED');
+    const updated = await updateSubscriptionStatusIf(subscription.id, 'PENDING_AUTH', 'AUTH_DENIED');
+
+    if (!updated) {
+      return;
+    }
 
     const event = await insertEvent({
       subscriptionId: subscription.id,

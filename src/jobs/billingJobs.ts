@@ -108,6 +108,12 @@ export async function cancelUnsendableCycles(today: string): Promise<number> {
       continue;
     }
 
+    const subscription = await findSubscriptionById(cycle.subscriptionId);
+
+    if (!subscription || !['ACTIVE', 'PAST_DUE'].includes(subscription.status)) {
+      continue;
+    }
+
     try {
       assertCycleTransition(cycle.status, 'CANCELED');
 
