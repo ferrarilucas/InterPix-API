@@ -20,6 +20,7 @@ import * as cyclesRepo from '../repositories/cycles';
 import * as webhookDispatcher from '../domain/webhookDispatcher';
 import {
   cancelUnsendableCycles,
+  escalateStaleCycles,
   expireOverdue,
   generateCycles,
   reconcile,
@@ -351,6 +352,71 @@ describe('expireOverdue', () => {
 
     expect((await findCycleById(cycle.id))?.status).toBe('ABANDONED');
     expect((await findSubscriptionById(subscription.id))?.status).toBe('SUSPENDED');
+  });
+});
+
+describe('escalateStaleCycles', () => {
+  it('resolve ciclo SENT mais velho que a janela de reconciliacao e libera o proximo ciclo', async () => {
+    const today = '2027-02-20';
+    const subscription = await createFixture({ nextDueDate: '2027-01-10' });
+    await updateSubscriptionStatus(subscription.id, 'ACTIVE', { interRecId: randomUUID() });
+    const cycle = await insertCycle({
+      subscriptionId: subscription.id,
+      seq: 1,
+      dueDate: '2027-01-10',
+      amount: '29.90',
+    });
+    await updateCycleStatus(cycle.id, 'SENT', { interTxid: randomUUID() });
+
+    await reconcile(today);
+    expect((await findCycleById(cycle.id))?.status).toBe('SENT');
+    await expireOverdue(today);
+    expect((await findCycleById(cycle.id))?.status).toBe('SENT');
+    await generateCycles(today);
+    expect(await listCyclesBySubscription(subscription.id)).toHaveLength(1);
+
+    await escalateStaleCycles(today);
+
+    expect((await findCycleById(cycle.id))?.status).toBe('ABANDONED');
+    expect(await listDeliveredEventTypes(subscription.id)).toContain('cycle.failed');
+
+    await generateCycles(today);
+    const cycles = await listCyclesBySubscription(subscription.id);
+    expect(cycles).toHaveLength(2);
+    expect(cycles[1].seq).toBe(2);
+    expect(cycles[1].status).toBe('SCHEDULED');
+  });
+
+  it('usa a decisao compartilhada quando o Inter responde de forma conclusiva', async () => {
+    const txid = randomUUID();
+    const subscription = await createFixture({ nextDueDate: '2027-01-15' });
+    await updateSubscriptionStatus(subscription.id, 'ACTIVE', { interRecId: randomUUID() });
+    const cycle = await insertCycle({
+      subscriptionId: subscription.id,
+      seq: 1,
+      dueDate: '2027-01-15',
+      amount: '29.90',
+    });
+    await updateCycleStatus(cycle.id, 'SENT', { interTxid: txid });
+
+    vi.spyOn(inter, 'getChargeByTxid').mockImplementation(async (requested) =>
+      requested === txid
+        ? {
+            txid,
+            status: 'PAID',
+            rawStatus: 'CONCLUIDA',
+            endToEndId: 'E-stale',
+            paidAt: '2027-01-16T10:00:00Z',
+          }
+        : { txid: requested, status: 'UNKNOWN', rawStatus: 'INERTE' },
+    );
+
+    await escalateStaleCycles('2027-02-25');
+
+    const resolved = await findCycleById(cycle.id);
+    expect(resolved?.status).toBe('PAID');
+    expect(resolved?.endToEndId).toBe('E-stale');
+    expect(await listDeliveredEventTypes(subscription.id)).toContain('cycle.paid');
   });
 });
 

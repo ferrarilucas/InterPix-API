@@ -5,6 +5,7 @@ import { deliverPending } from '../domain/webhookDispatcher';
 import { withAdvisoryLock } from './lock';
 import {
   cancelUnsendableCycles,
+  escalateStaleCycles,
   expireOverdue,
   generateCycles,
   reconcile,
@@ -24,8 +25,16 @@ async function runDaily(): Promise<void> {
   const generated = await generateCycles(date);
   const sent = await sendCharges(date);
   const retried = await retryFailed(date);
+  const escalated = await escalateStaleCycles(date);
   const expired = await expireOverdue(date);
-  logger.info('jobs diarios concluidos', { unsendable, generated, sent, retried, expired });
+  logger.info('jobs diarios concluidos', {
+    unsendable,
+    generated,
+    sent,
+    retried,
+    escalated,
+    expired,
+  });
 }
 
 export function startScheduler(): void {

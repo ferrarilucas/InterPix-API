@@ -37,6 +37,7 @@ import {
   shouldSendCharge,
 } from '../domain/schedule';
 import { applyChargeStatus } from '../domain/chargeOutcome';
+import { Cycle } from '../domain/types';
 
 const RECONCILE_GRACE_DAYS = 3;
 const MAX_RETRIES_PER_CYCLE = 3;
@@ -409,6 +410,97 @@ export async function expireOverdue(today: string): Promise<number> {
   }
 
   return expired;
+}
+
+async function abandonStaleCycle(cycle: Cycle): Promise<boolean> {
+  return withTransaction(async (client) => {
+    if (cycle.status === 'SENT') {
+      assertCycleTransition('SENT', 'FAILED');
+      const failed = await updateCycleStatusIf(cycle.id, 'SENT', 'FAILED', {}, client);
+
+      if (!failed) {
+        return false;
+      }
+    }
+
+    assertCycleTransition(cycle.status === 'SENT' ? 'FAILED' : cycle.status, 'ABANDONED');
+    const abandoned = await updateCycleStatusIf(
+      cycle.id,
+      cycle.status === 'SENT' ? 'FAILED' : cycle.status,
+      'ABANDONED',
+      {},
+      client,
+    );
+
+    if (!abandoned) {
+      return false;
+    }
+
+    const event = await insertEvent(
+      {
+        subscriptionId: cycle.subscriptionId,
+        cycleId: cycle.id,
+        type: 'cycle.failed',
+        payload: {
+          txid: cycle.interTxid,
+          reason: 'SEM_CONFIRMACAO_DO_PROVEDOR',
+          seq: cycle.seq,
+          dueDate: cycle.dueDate,
+        },
+      },
+      client,
+    );
+    await enqueueDelivery(
+      event.id,
+      'cycle.failed',
+      {
+        subscriptionId: cycle.subscriptionId,
+        cycleSeq: cycle.seq,
+        reason: 'SEM_CONFIRMACAO_DO_PROVEDOR',
+      },
+      client,
+    );
+
+    return true;
+  });
+}
+
+export async function escalateStaleCycles(today: string): Promise<number> {
+  const threshold = addDays(today, -(config.dunningWindowDays + RECONCILE_GRACE_DAYS));
+  const cycles = await listCyclesByStatusBefore(['SENT', 'RETRYING'], threshold);
+  let escalated = 0;
+
+  for (const cycle of cycles) {
+    try {
+      if (cycle.interTxid) {
+        const charge = await inter.getChargeByTxid(cycle.interTxid);
+        const outcome = await applyChargeStatus(cycle, charge);
+
+        if (outcome) {
+          continue;
+        }
+      }
+
+      const applied = await abandonStaleCycle(cycle);
+
+      if (applied) {
+        escalated += 1;
+        logger.error('ciclo abandonado por falta de confirmacao do provedor', {
+          cycleId: cycle.id,
+          subscriptionId: cycle.subscriptionId,
+          dueDate: cycle.dueDate,
+          status: cycle.status,
+        });
+      }
+    } catch (error) {
+      logger.error('falha ao escalar ciclo sem confirmacao', {
+        cycleId: cycle.id,
+        message: (error as Error).message,
+      });
+    }
+  }
+
+  return escalated;
 }
 
 async function reconcileCycles(today: string): Promise<number> {
