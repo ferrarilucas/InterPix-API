@@ -1,9 +1,15 @@
 import { query } from '../shared/db';
 
+export interface ReceiptClaim {
+  id: string;
+  isNew: boolean;
+  processable: boolean;
+}
+
 export async function insertReceipt(
   dedupeKey: string,
   payload: unknown,
-): Promise<{ id: string; isNew: boolean }> {
+): Promise<ReceiptClaim> {
   const rows = await query<{ id: string }>(
     `INSERT INTO inter_webhook_receipts (dedupe_key, raw_payload)
      VALUES ($1, $2)
@@ -13,14 +19,18 @@ export async function insertReceipt(
   );
 
   if (rows[0]) {
-    return { id: rows[0].id, isNew: true };
+    return { id: rows[0].id, isNew: true, processable: true };
   }
 
-  const existing = await query<{ id: string }>(
-    'SELECT id::text AS id FROM inter_webhook_receipts WHERE dedupe_key = $1',
+  const existing = await query<{ id: string; processed_at: string | null }>(
+    'SELECT id::text AS id, processed_at FROM inter_webhook_receipts WHERE dedupe_key = $1',
     [dedupeKey],
   );
-  return { id: existing[0].id, isNew: false };
+  return {
+    id: existing[0].id,
+    isNew: false,
+    processable: existing[0].processed_at === null,
+  };
 }
 
 export async function markReceiptProcessed(id: string): Promise<void> {

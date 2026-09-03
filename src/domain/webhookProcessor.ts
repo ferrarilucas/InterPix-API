@@ -1,3 +1,4 @@
+import { createHash } from 'crypto';
 import * as inter from '../providers/inter/pixAutomatico';
 import { logger } from '../shared/logger';
 import { findCycleByTxid } from '../repositories/cycles';
@@ -21,7 +22,7 @@ function dedupeKeyFor(payload: InterWebhookPayload): string {
   if (payload.eventId) {
     return `evt:${payload.eventId}`;
   }
-  return `raw:${JSON.stringify(payload)}`;
+  return `raw:${createHash('sha256').update(JSON.stringify(payload)).digest('hex')}`;
 }
 
 async function processCharge(txid: string): Promise<void> {
@@ -83,7 +84,7 @@ async function processRecurrence(recId: string): Promise<void> {
 export async function processInterEvent(payload: InterWebhookPayload): Promise<void> {
   const receipt = await insertReceipt(dedupeKeyFor(payload), payload);
 
-  if (!receipt.isNew) {
+  if (!receipt.processable) {
     return;
   }
 

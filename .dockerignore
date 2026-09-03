@@ -3,4 +3,6 @@ package-lock.json
 .env
 .gitignore
 README.md
-dist 
+dist
+test-cert.key
+test-cert.crt

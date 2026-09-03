@@ -6,6 +6,7 @@ import { config } from '../../shared/config';
 import { closePool } from '../../shared/db';
 import { AppError } from '../../shared/errors';
 import * as inter from '../../providers/inter/pixAutomatico';
+import { api } from '../../shared/api';
 import {
   addDays,
   businessToday,
@@ -113,6 +114,27 @@ describe('POST /subscriptions', () => {
       });
 
     expect(response.status).toBe(201);
+  });
+
+  it('leva um CNPJ de 14 digitos ate o corpo enviado ao Inter', async () => {
+    const recId = `rec-cnpj-${randomUUID()}`;
+    const post = vi.spyOn(api, 'post').mockResolvedValue({
+      data: { idRec: recId, status: 'CRIADA', idSolicRec: `sol-${recId}` },
+    } as never);
+
+    const response = await request(app)
+      .post('/subscriptions')
+      .set(auth)
+      .send({
+        ...validBody,
+        externalUserId: `usr_cnpj_${recId}`,
+        firstDueDate: minimumFirstDueDate(businessToday(), config.chargeLeadDays),
+        debtor: { taxId: '12345678901234', name: 'Empresa Ltda' },
+      });
+
+    expect(response.status).toBe(201);
+    const body = post.mock.calls[0][1] as { vinculo: { devedor: Record<string, unknown> } };
+    expect(body.vinculo.devedor.cnpj).toBe('12345678901234');
   });
 
   it('devolve 502 sem vazar detalhe quando o Inter falha', async () => {

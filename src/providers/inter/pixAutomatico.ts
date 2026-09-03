@@ -71,10 +71,17 @@ function periodicidadeFromMonths(intervalMonths: number): string {
   return 'MENSAL';
 }
 
+function devedorFrom(input: CreateRecurrenceInput): Record<string, unknown> {
+  if (input.debtorTaxId.length === 14) {
+    return { cnpj: input.debtorTaxId, nome: input.debtorName };
+  }
+  return { cpf: input.debtorTaxId, nome: input.debtorName };
+}
+
 function toRecurrenceBody(input: CreateRecurrenceInput): Record<string, unknown> {
   return {
     vinculo: {
-      devedor: { cpf: input.debtorTaxId, nome: input.debtorName },
+      devedor: devedorFrom(input),
       objeto: input.planCode,
     },
     calendario: {

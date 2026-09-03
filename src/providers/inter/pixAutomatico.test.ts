@@ -26,6 +26,44 @@ describe('createRecurrence', () => {
     expect(body.politicaRetentativa).toBe('PERMITE_3R_7D');
   });
 
+  it('envia o devedor como cpf quando o documento tem 11 digitos', async () => {
+    const post = vi.spyOn(api, 'post').mockResolvedValue({
+      data: { idRec: 'rec-cpf', status: 'CRIADA' },
+    } as never);
+
+    await createRecurrence({
+      amount: '29.90',
+      intervalMonths: 1,
+      firstDueDate: '2026-09-20',
+      debtorTaxId: '12345678901',
+      debtorName: 'Fulano',
+      planCode: 'mensal_29_90',
+    });
+
+    const body = post.mock.calls[0][1] as { vinculo: { devedor: Record<string, unknown> } };
+    expect(body.vinculo.devedor.cpf).toBe('12345678901');
+    expect(body.vinculo.devedor.cnpj).toBeUndefined();
+  });
+
+  it('envia o devedor como cnpj quando o documento tem 14 digitos', async () => {
+    const post = vi.spyOn(api, 'post').mockResolvedValue({
+      data: { idRec: 'rec-cnpj', status: 'CRIADA' },
+    } as never);
+
+    await createRecurrence({
+      amount: '29.90',
+      intervalMonths: 1,
+      firstDueDate: '2026-09-20',
+      debtorTaxId: '12345678901234',
+      debtorName: 'Empresa Ltda',
+      planCode: 'mensal_29_90',
+    });
+
+    const body = post.mock.calls[0][1] as { vinculo: { devedor: Record<string, unknown> } };
+    expect(body.vinculo.devedor.cnpj).toBe('12345678901234');
+    expect(body.vinculo.devedor.cpf).toBeUndefined();
+  });
+
   it('mapeia a resposta do Inter para o formato interno', async () => {
     vi.spyOn(api, 'post').mockResolvedValue({
       data: { idRec: 'rec-2', status: 'CRIADA' },

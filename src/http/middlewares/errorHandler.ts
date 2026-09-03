@@ -14,6 +14,12 @@ export function errorHandler(
 ): void {
   const log = req.log ?? logger;
 
+  if (error instanceof SyntaxError && 'body' in error) {
+    log.warn('corpo json invalido');
+    res.status(400).json({ code: 'BAD_REQUEST', message: 'Corpo da requisicao nao e um JSON valido.' });
+    return;
+  }
+
   if (error instanceof AppError) {
     if (error.status >= 500) {
       log.error('erro tratado', { code: error.code, message: error.message });

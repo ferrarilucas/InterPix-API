@@ -3,8 +3,12 @@ import { afterAll, afterEach, describe, expect, it, vi } from 'vitest';
 import request from 'supertest';
 import { createApp } from '../app';
 import { closePool } from '../../shared/db';
+import { AppError } from '../../shared/errors';
 import * as inter from '../../providers/inter/pixAutomatico';
-import { createSubscription as createFixture } from '../../test/factories';
+import {
+  createSubscription as createFixture,
+  listDeliveredEventTypes,
+} from '../../test/factories';
 import { insertCycle, findCycleById, updateCycleStatus } from '../../repositories/cycles';
 import { updateSubscriptionStatus, findSubscriptionById } from '../../repositories/subscriptions';
 import * as webhookDispatcher from '../../domain/webhookDispatcher';
@@ -235,5 +239,58 @@ describe('POST /webhooks/inter', () => {
     await vi.waitFor(() => {
       expect(logError).toHaveBeenCalled();
     }, WAIT_FOR_OPTS);
+  });
+
+  it('reprocessa a entrega repetida quando a primeira tentativa falhou no meio', async () => {
+    const subscription = await createFixture();
+    const txid = randomUUID();
+    const eventId = randomUUID();
+    await updateSubscriptionStatus(subscription.id, 'ACTIVE', { interRecId: randomUUID() });
+    const cycle = await insertCycle({
+      subscriptionId: subscription.id,
+      seq: 1,
+      dueDate: '2026-09-20',
+      amount: '29.90',
+    });
+    await updateCycleStatus(cycle.id, 'SENT', { interTxid: txid });
+
+    const getCharge = vi
+      .spyOn(inter, 'getChargeByTxid')
+      .mockRejectedValueOnce(AppError.upstream())
+      .mockResolvedValue({
+        txid,
+        status: 'PAID',
+        rawStatus: 'CONCLUIDA',
+        endToEndId: 'E-retry',
+        paidAt: '2026-09-20T10:00:00Z',
+      });
+
+    await request(app).post('/webhooks/inter').send({ txid, eventId });
+
+    await vi.waitFor(() => {
+      expect(getCharge).toHaveBeenCalledTimes(1);
+    }, WAIT_FOR_OPTS);
+    expect((await findCycleById(cycle.id))?.status).toBe('SENT');
+
+    await request(app).post('/webhooks/inter').send({ txid, eventId });
+
+    await vi.waitFor(async () => {
+      expect((await findCycleById(cycle.id))?.status).toBe('PAID');
+    }, WAIT_FOR_OPTS);
+
+    expect(
+      (await listDeliveredEventTypes(subscription.id)).filter((type) => type === 'cycle.paid'),
+    ).toHaveLength(1);
+  });
+
+  it('ignora corpo invalido sem fazer o Inter reenviar', async () => {
+    const getCharge = vi.spyOn(inter, 'getChargeByTxid');
+
+    const response = await request(app)
+      .post('/webhooks/inter')
+      .send({ txid: 12345, idRec: { nested: true } });
+
+    expect(response.status).toBe(200);
+    expect(getCharge).not.toHaveBeenCalled();
   });
 });

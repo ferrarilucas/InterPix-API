@@ -14,6 +14,17 @@ describe('app', () => {
     expect(response.body.code).toBe('NOT_FOUND');
   });
 
+  it('devolve 400 quando o corpo nao e um JSON valido', async () => {
+    const response = await request(app)
+      .post('/subscriptions')
+      .set('Authorization', `Bearer ${config.apiToken}`)
+      .set('Content-Type', 'application/json')
+      .send('{"externalUserId":');
+
+    expect(response.status).toBe(400);
+    expect(response.body.code).toBe('BAD_REQUEST');
+  });
+
   it('devolve o requestId no header da resposta', async () => {
     const response = await request(app).get('/health');
     expect(response.headers['x-request-id']).toBeTruthy();
