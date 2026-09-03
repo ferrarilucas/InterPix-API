@@ -8,8 +8,12 @@ export const pool = new Pool({
   connectionTimeoutMillis: 5_000,
 });
 
-export async function query<T>(text: string, params: unknown[] = []): Promise<T[]> {
-  const result = await pool.query(text, params);
+export async function query<T>(
+  text: string,
+  params: unknown[] = [],
+  client?: PoolClient,
+): Promise<T[]> {
+  const result = client ? await client.query(text, params) : await pool.query(text, params);
   return result.rows as T[];
 }
 

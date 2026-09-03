@@ -1,3 +1,4 @@
+import { PoolClient } from 'pg';
 import { query } from '../shared/db';
 import { Cycle, CycleAttempt, CycleStatus } from '../domain/types';
 
@@ -114,10 +115,16 @@ export async function listCyclesByStatus(statuses: CycleStatus[]): Promise<Cycle
   return rows.map(toCycle);
 }
 
+export interface CyclePatch {
+  interTxid?: string;
+  endToEndId?: string;
+  paidAt?: string;
+}
+
 export async function updateCycleStatus(
   id: string,
   status: CycleStatus,
-  patch: { interTxid?: string; endToEndId?: string; paidAt?: string } = {},
+  patch: CyclePatch = {},
 ): Promise<Cycle> {
   const rows = await query<CycleRow>(
     `UPDATE cycles SET
@@ -131,6 +138,60 @@ export async function updateCycleStatus(
     [id, status, patch.interTxid ?? null, patch.endToEndId ?? null, patch.paidAt ?? null],
   );
   return toCycle(rows[0]);
+}
+
+export async function updateCycleStatusIf(
+  id: string,
+  expectedStatus: CycleStatus,
+  status: CycleStatus,
+  patch: CyclePatch = {},
+  client?: PoolClient,
+): Promise<Cycle | null> {
+  const rows = await query<CycleRow>(
+    `UPDATE cycles SET
+       status = $3,
+       inter_txid = COALESCE($4, inter_txid),
+       end_to_end_id = COALESCE($5, end_to_end_id),
+       paid_at = COALESCE($6, paid_at),
+       updated_at = now()
+     WHERE id = $1 AND status = $2
+     RETURNING *`,
+    [
+      id,
+      expectedStatus,
+      status,
+      patch.interTxid ?? null,
+      patch.endToEndId ?? null,
+      patch.paidAt ?? null,
+    ],
+    client,
+  );
+  return rows[0] ? toCycle(rows[0]) : null;
+}
+
+export async function listCyclesByStatusInRange(
+  statuses: CycleStatus[],
+  fromDate: string,
+  toDate: string,
+): Promise<Cycle[]> {
+  const rows = await query<CycleRow>(
+    `SELECT * FROM cycles
+     WHERE status = ANY($1::cycle_status[]) AND due_date >= $2 AND due_date <= $3
+     ORDER BY due_date`,
+    [statuses, fromDate, toDate],
+  );
+  return rows.map(toCycle);
+}
+
+export async function findLatestCycleAttempt(cycleId: string): Promise<CycleAttempt | null> {
+  const rows = await query<AttemptRow>(
+    `SELECT * FROM cycle_attempts
+     WHERE cycle_id = $1
+     ORDER BY attempt_number DESC
+     LIMIT 1`,
+    [cycleId],
+  );
+  return rows[0] ? toAttempt(rows[0]) : null;
 }
 
 export async function insertCycleAttempt(input: {
@@ -160,10 +221,12 @@ export async function markAttemptOutcome(
   attemptNumber: number,
   outcome: string,
   failureReason?: string,
+  client?: PoolClient,
 ): Promise<void> {
   await query(
     `UPDATE cycle_attempts SET outcome = $3, failure_reason = $4
      WHERE cycle_id = $1 AND attempt_number = $2`,
     [cycleId, attemptNumber, outcome, failureReason ?? null],
+    client,
   );
 }

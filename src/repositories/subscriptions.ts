@@ -1,3 +1,4 @@
+import { PoolClient } from 'pg';
 import { query } from '../shared/db';
 import { Subscription, SubscriptionStatus } from '../domain/types';
 
@@ -103,6 +104,7 @@ export async function updateSubscriptionStatus(
   id: string,
   status: SubscriptionStatus,
   patch: SubscriptionPatch = {},
+  client?: PoolClient,
 ): Promise<Subscription> {
   const rows = await query<SubscriptionRow>(
     `UPDATE subscriptions SET
@@ -124,6 +126,7 @@ export async function updateSubscriptionStatus(
       patch.authorizedAt ?? null,
       patch.canceledAt ?? null,
     ],
+    client,
   );
   return toDomain(rows[0]);
 }
@@ -133,6 +136,7 @@ export async function updateSubscriptionStatusIf(
   expectedStatus: SubscriptionStatus,
   status: SubscriptionStatus,
   patch: SubscriptionPatch = {},
+  client?: PoolClient,
 ): Promise<Subscription | null> {
   const rows = await query<SubscriptionRow>(
     `UPDATE subscriptions SET
@@ -155,6 +159,7 @@ export async function updateSubscriptionStatusIf(
       patch.authorizedAt ?? null,
       patch.canceledAt ?? null,
     ],
+    client,
   );
   return rows[0] ? toDomain(rows[0]) : null;
 }

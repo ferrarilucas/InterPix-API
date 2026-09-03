@@ -83,7 +83,7 @@ export async function sendCharges(today: string): Promise<number> {
   let sent = 0;
 
   for (const cycle of cycles) {
-    if (!shouldSendCharge(cycle.dueDate, today, config.chargeLeadDays)) {
+    if (!shouldSendCharge(cycle.dueDate, today)) {
       continue;
     }
 

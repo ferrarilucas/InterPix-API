@@ -1,3 +1,4 @@
+import { PoolClient } from 'pg';
 import { query } from '../shared/db';
 
 export interface PendingDelivery {
@@ -8,15 +9,19 @@ export interface PendingDelivery {
   attempts: number;
 }
 
-export async function insertDelivery(input: {
-  eventId: string;
-  targetUrl: string;
-  payload: Record<string, unknown>;
-}): Promise<void> {
+export async function insertDelivery(
+  input: {
+    eventId: string;
+    targetUrl: string;
+    payload: Record<string, unknown>;
+  },
+  client?: PoolClient,
+): Promise<void> {
   await query(
     `INSERT INTO webhook_deliveries (event_id, target_url, payload, next_retry_at)
      VALUES ($1, $2, $3, now())`,
     [input.eventId, input.targetUrl, JSON.stringify(input.payload)],
+    client,
   );
 }
 
@@ -31,7 +36,7 @@ export async function listDueDeliveries(limit: number): Promise<PendingDelivery[
     `SELECT id::text AS id, event_id::text AS event_id, target_url, payload, attempts
      FROM webhook_deliveries
      WHERE status = 'PENDING' AND (next_retry_at IS NULL OR next_retry_at <= now())
-     ORDER BY id
+     ORDER BY webhook_deliveries.id
      LIMIT $1`,
     [limit],
   );

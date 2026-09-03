@@ -1,3 +1,4 @@
+import { PoolClient } from 'pg';
 import { query } from '../shared/db';
 
 export interface StoredEvent {
@@ -7,17 +8,21 @@ export interface StoredEvent {
   createdAt: string;
 }
 
-export async function insertEvent(input: {
-  subscriptionId?: string;
-  cycleId?: string;
-  type: string;
-  payload: unknown;
-}): Promise<{ id: string }> {
+export async function insertEvent(
+  input: {
+    subscriptionId?: string;
+    cycleId?: string;
+    type: string;
+    payload: unknown;
+  },
+  client?: PoolClient,
+): Promise<{ id: string }> {
   const rows = await query<{ id: string }>(
     `INSERT INTO events (subscription_id, cycle_id, type, payload)
      VALUES ($1, $2, $3, $4)
      RETURNING id::text AS id`,
     [input.subscriptionId ?? null, input.cycleId ?? null, input.type, JSON.stringify(input.payload)],
+    client,
   );
   return rows[0];
 }

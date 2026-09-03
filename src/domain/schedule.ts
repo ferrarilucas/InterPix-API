@@ -1,5 +1,5 @@
-const MIN_LEAD_DAYS = 2;
-const MAX_LEAD_DAYS = 10;
+export const MIN_LEAD_DAYS = 2;
+export const MAX_LEAD_DAYS = 10;
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 const BUSINESS_TIMEZONE = 'America/Sao_Paulo';
 
@@ -30,9 +30,28 @@ export function isWithinSendWindow(dueDate: string, sendDate: string): boolean {
   return lead >= MIN_LEAD_DAYS && lead <= MAX_LEAD_DAYS;
 }
 
-export function shouldSendCharge(dueDate: string, today: string, leadDays: number): boolean {
-  const lead = daysBetween(today, dueDate);
-  return lead <= leadDays && isWithinSendWindow(dueDate, today);
+export function shouldSendCharge(dueDate: string, today: string): boolean {
+  return isWithinSendWindow(dueDate, today);
+}
+
+export function isSendWindowMissed(dueDate: string, today: string): boolean {
+  return daysBetween(today, dueDate) < MIN_LEAD_DAYS;
+}
+
+export function addDays(date: string, days: number): string {
+  return toIso(toUtc(date) + days * MS_PER_DAY);
+}
+
+export function minimumFirstDueDate(today: string, leadDays: number): string {
+  return addDays(today, Math.max(leadDays, MIN_LEAD_DAYS));
+}
+
+export function isDunningWindowOver(
+  dueDate: string,
+  today: string,
+  windowDays: number,
+): boolean {
+  return daysBetween(dueDate, today) > windowDays;
 }
 
 export function nextRetryDate(

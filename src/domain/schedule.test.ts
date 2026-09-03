@@ -3,7 +3,10 @@ import {
   addMonths,
   businessToday,
   canCancelCycle,
+  isDunningWindowOver,
+  isSendWindowMissed,
   isWithinSendWindow,
+  minimumFirstDueDate,
   nextRetryDate,
   shouldSendCharge,
 } from './schedule';
@@ -43,20 +46,57 @@ describe('isWithinSendWindow', () => {
 });
 
 describe('shouldSendCharge', () => {
-  it('dispara exatamente no dia do lead configurado', () => {
-    expect(shouldSendCharge('2026-09-20', '2026-09-17', 3)).toBe(true);
+  it('dispara no dia do lead preferido', () => {
+    expect(shouldSendCharge('2026-09-20', '2026-09-17')).toBe(true);
   });
 
   it('dispara tambem se o job atrasou, desde que ainda esteja na janela', () => {
-    expect(shouldSendCharge('2026-09-20', '2026-09-18', 3)).toBe(true);
+    expect(shouldSendCharge('2026-09-20', '2026-09-18')).toBe(true);
   });
 
-  it('nao dispara antes do lead', () => {
-    expect(shouldSendCharge('2026-09-20', '2026-09-16', 3)).toBe(false);
+  it('dispara em qualquer dia da janela legal, inclusive no limite de 10 dias', () => {
+    expect(shouldSendCharge('2026-09-20', '2026-09-10')).toBe(true);
+    expect(shouldSendCharge('2026-09-20', '2026-09-16')).toBe(true);
+  });
+
+  it('nao dispara antes do limite de 10 dias', () => {
+    expect(shouldSendCharge('2026-09-20', '2026-09-09')).toBe(false);
   });
 
   it('nao dispara depois de fechada a janela', () => {
-    expect(shouldSendCharge('2026-09-20', '2026-09-19', 3)).toBe(false);
+    expect(shouldSendCharge('2026-09-20', '2026-09-19')).toBe(false);
+    expect(shouldSendCharge('2026-09-20', '2026-09-20')).toBe(false);
+  });
+});
+
+describe('isSendWindowMissed', () => {
+  it('e falso enquanto o ciclo ainda pode ser enviado', () => {
+    expect(isSendWindowMissed('2026-09-20', '2026-09-18')).toBe(false);
+  });
+
+  it('e verdadeiro quando o lead caiu abaixo de 2 dias', () => {
+    expect(isSendWindowMissed('2026-09-20', '2026-09-19')).toBe(true);
+    expect(isSendWindowMissed('2026-09-20', '2026-09-21')).toBe(true);
+  });
+});
+
+describe('minimumFirstDueDate', () => {
+  it('exige ao menos o lead configurado de folga', () => {
+    expect(minimumFirstDueDate('2026-09-01', 3)).toBe('2026-09-04');
+  });
+
+  it('nunca aceita menos que o minimo legal de 2 dias', () => {
+    expect(minimumFirstDueDate('2026-09-01', 1)).toBe('2026-09-03');
+  });
+});
+
+describe('isDunningWindowOver', () => {
+  it('nao encerra a janela no ultimo dia dela', () => {
+    expect(isDunningWindowOver('2026-09-20', '2026-09-27', 7)).toBe(false);
+  });
+
+  it('encerra a janela em D+8', () => {
+    expect(isDunningWindowOver('2026-09-20', '2026-09-28', 7)).toBe(true);
   });
 });
 
