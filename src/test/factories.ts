@@ -1,3 +1,4 @@
+import { query } from '../shared/db';
 import { insertSubscription } from '../repositories/subscriptions';
 import { Subscription } from '../domain/types';
 
@@ -17,4 +18,16 @@ export async function createSubscription(
     nextDueDate: '2026-09-20',
     ...overrides,
   });
+}
+
+export async function listDeliveredEventTypes(subscriptionId: string): Promise<string[]> {
+  const rows = await query<{ type: string }>(
+    `SELECT d.payload->>'type' AS type
+     FROM webhook_deliveries d
+     JOIN events e ON e.id = d.event_id
+     WHERE e.subscription_id = $1
+     ORDER BY d.id`,
+    [subscriptionId],
+  );
+  return rows.map((row) => row.type);
 }

@@ -2,9 +2,13 @@ import { randomUUID } from 'crypto';
 import { afterAll, afterEach, describe, expect, it, vi } from 'vitest';
 import { closePool } from '../shared/db';
 import * as inter from '../providers/inter/pixAutomatico';
-import { createSubscription as createFixture } from '../test/factories';
-import { insertCycle, updateCycleStatus } from '../repositories/cycles';
-import { updateSubscriptionStatus } from '../repositories/subscriptions';
+import { AppError } from '../shared/errors';
+import {
+  createSubscription as createFixture,
+  listDeliveredEventTypes,
+} from '../test/factories';
+import { findCycleById, insertCycle, updateCycleStatus } from '../repositories/cycles';
+import { findSubscriptionById, updateSubscriptionStatus } from '../repositories/subscriptions';
 import { cancelSubscription } from './subscriptionService';
 
 const runId = randomUUID();
@@ -127,5 +131,35 @@ describe('cancelSubscription', () => {
     await expect(cancelSubscription(subscription.id, '2026-09-01')).rejects.toMatchObject({
       code: 'INVALID_TRANSITION',
     });
+  });
+
+  it('entrega subscription.canceled para o SaaS', async () => {
+    vi.spyOn(inter, 'cancelRecurrence').mockResolvedValue(undefined);
+
+    const subscription = await createFixture({ nextDueDate: '2026-09-20' });
+    await updateSubscriptionStatus(subscription.id, 'ACTIVE', { interRecId: `rec-c7-${runId}` });
+
+    await cancelSubscription(subscription.id, '2026-09-01');
+
+    expect(await listDeliveredEventTypes(subscription.id)).toContain('subscription.canceled');
+  });
+
+  it('nao altera nada localmente quando o cancelamento no Inter falha', async () => {
+    vi.spyOn(inter, 'cancelRecurrence').mockRejectedValue(AppError.upstream());
+
+    const subscription = await createFixture({ nextDueDate: '2026-09-20' });
+    await updateSubscriptionStatus(subscription.id, 'ACTIVE', { interRecId: `rec-c8-${runId}` });
+    const cycle = await insertCycle({
+      subscriptionId: subscription.id,
+      seq: 1,
+      dueDate: '2026-09-20',
+      amount: '29.90',
+    });
+
+    await expect(cancelSubscription(subscription.id, '2026-09-01')).rejects.toThrow(AppError);
+
+    expect((await findSubscriptionById(subscription.id))?.status).toBe('ACTIVE');
+    expect((await findCycleById(cycle.id))?.status).toBe('SCHEDULED');
+    expect(await listDeliveredEventTypes(subscription.id)).not.toContain('subscription.canceled');
   });
 });

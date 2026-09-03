@@ -5,6 +5,8 @@ import { AppError } from '../shared/errors';
 import * as inter from '../providers/inter/pixAutomatico';
 import { insertCycle } from '../repositories/cycles';
 import { listEventsBySubscription } from '../repositories/events';
+import { findSubscriptionById } from '../repositories/subscriptions';
+import { query } from '../shared/db';
 import { createSubscription, getSubscriptionDetail } from './subscriptionService';
 
 const runId = randomUUID();
@@ -68,6 +70,66 @@ describe('createSubscription', () => {
         debtor: { taxId: '12345678901', name: 'Fulano de Tal' },
       }),
     ).rejects.toThrow(AppError);
+  });
+
+  it('marca a assinatura como AUTH_DENIED quando o Inter falha, em vez de deixar orfa', async () => {
+    vi.spyOn(inter, 'createRecurrence').mockRejectedValue(AppError.upstream());
+
+    const externalUserId = `usr_svc_orphan_${runId}`;
+
+    await expect(
+      createSubscription({
+        externalUserId,
+        planCode: 'mensal_29_90',
+        amount: '29.90',
+        intervalMonths: 1,
+        firstDueDate: '2026-12-20',
+        debtor: { taxId: '12345678901', name: 'Fulano de Tal' },
+      }),
+    ).rejects.toThrow(AppError);
+
+    const rows = await query<{ id: string }>(
+      'SELECT id FROM subscriptions WHERE external_user_id = $1',
+      [externalUserId],
+    );
+    expect(rows).toHaveLength(1);
+
+    const stored = await findSubscriptionById(rows[0].id);
+    expect(stored?.status).toBe('AUTH_DENIED');
+
+    const events = await listEventsBySubscription(rows[0].id);
+    expect(events.some((event) => event.type === 'subscription.auth_denied')).toBe(true);
+  });
+
+  it('guarda o recId quando a solicitacao de autorizacao falha depois da rec criada', async () => {
+    const recId = `rec-svc-half-${runId}`;
+    vi.spyOn(inter, 'createRecurrence').mockResolvedValue({
+      recId,
+      status: 'CREATED',
+      rawStatus: 'CRIADA',
+    });
+    vi.spyOn(inter, 'requestAuthorization').mockRejectedValue(AppError.upstream());
+
+    const externalUserId = `usr_svc_half_${runId}`;
+
+    await expect(
+      createSubscription({
+        externalUserId,
+        planCode: 'mensal_29_90',
+        amount: '29.90',
+        intervalMonths: 1,
+        firstDueDate: '2026-12-20',
+        debtor: { taxId: '12345678901', name: 'Fulano de Tal' },
+      }),
+    ).rejects.toThrow(AppError);
+
+    const rows = await query<{ id: string }>(
+      'SELECT id FROM subscriptions WHERE external_user_id = $1',
+      [externalUserId],
+    );
+    const stored = await findSubscriptionById(rows[0].id);
+    expect(stored?.status).toBe('AUTH_DENIED');
+    expect(stored?.interRecId).toBe(recId);
   });
 });
 

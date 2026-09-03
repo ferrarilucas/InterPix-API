@@ -125,6 +125,7 @@ export async function updateCycleStatus(
   id: string,
   status: CycleStatus,
   patch: CyclePatch = {},
+  client?: PoolClient,
 ): Promise<Cycle> {
   const rows = await query<CycleRow>(
     `UPDATE cycles SET
@@ -136,6 +137,7 @@ export async function updateCycleStatus(
      WHERE id = $1
      RETURNING *`,
     [id, status, patch.interTxid ?? null, patch.endToEndId ?? null, patch.paidAt ?? null],
+    client,
   );
   return toCycle(rows[0]);
 }

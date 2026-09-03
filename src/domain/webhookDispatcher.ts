@@ -1,5 +1,6 @@
 import axios from 'axios';
 import { createHmac } from 'crypto';
+import { PoolClient } from 'pg';
 import { config } from '../shared/config';
 import { logger } from '../shared/logger';
 import {
@@ -20,12 +21,16 @@ export async function enqueueDelivery(
   eventId: string,
   type: string,
   data: Record<string, unknown>,
+  client?: PoolClient,
 ): Promise<void> {
-  await insertDelivery({
-    eventId,
-    targetUrl: config.saasWebhookUrl,
-    payload: { type, data, eventId },
-  });
+  await insertDelivery(
+    {
+      eventId,
+      targetUrl: config.saasWebhookUrl,
+      payload: { type, data, eventId },
+    },
+    client,
+  );
 }
 
 export async function deliverPending(now?: Date): Promise<{ delivered: number; failed: number }> {

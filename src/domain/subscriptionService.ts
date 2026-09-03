@@ -1,5 +1,7 @@
 import { AppError } from '../shared/errors';
+import { withTransaction } from '../shared/db';
 import * as inter from '../providers/inter/pixAutomatico';
+import { RecurrenceResponse } from '../providers/inter/types';
 import {
   findSubscriptionById,
   insertSubscription,
@@ -13,6 +15,7 @@ import {
 import { insertEvent } from '../repositories/events';
 import { assertCycleTransition, assertSubscriptionTransition } from './stateMachine';
 import { businessToday, canCancelCycle } from './schedule';
+import { enqueueDelivery } from './webhookDispatcher';
 import { Cycle, Subscription } from './types';
 
 export interface CreateSubscriptionInput {
@@ -29,6 +32,56 @@ export interface CreateSubscriptionResult {
   authorization: { pixCopyPaste?: string; url?: string };
 }
 
+async function denyAuthorization(
+  subscription: Subscription,
+  recId: string | undefined,
+  error: unknown,
+): Promise<void> {
+  assertSubscriptionTransition(subscription.status, 'AUTH_DENIED');
+  await updateSubscriptionStatus(
+    subscription.id,
+    'AUTH_DENIED',
+    recId ? { interRecId: recId } : {},
+  );
+  await insertEvent({
+    subscriptionId: subscription.id,
+    type: 'subscription.auth_denied',
+    payload: {
+      reason: 'FALHA_AO_CRIAR_AUTORIZACAO',
+      recId: recId ?? null,
+      message: error instanceof Error ? error.message : String(error),
+    },
+  });
+}
+
+async function authorizeAtInter(
+  subscription: Subscription,
+  input: CreateSubscriptionInput,
+): Promise<{ recurrence: RecurrenceResponse; authorization: RecurrenceResponse }> {
+  let recId: string | undefined;
+
+  try {
+    const recurrence = await inter.createRecurrence({
+      amount: input.amount,
+      intervalMonths: input.intervalMonths,
+      firstDueDate: input.firstDueDate,
+      debtorTaxId: input.debtor.taxId,
+      debtorName: input.debtor.name,
+      planCode: input.planCode,
+    });
+    recId = recurrence.recId;
+
+    const authorization = await inter.requestAuthorization(recurrence.recId, {
+      payerRequest: input.planCode,
+    });
+
+    return { recurrence, authorization };
+  } catch (error) {
+    await denyAuthorization(subscription, recId, error);
+    throw error;
+  }
+}
+
 export async function createSubscription(
   input: CreateSubscriptionInput,
 ): Promise<CreateSubscriptionResult> {
@@ -42,20 +95,7 @@ export async function createSubscription(
     nextDueDate: input.firstDueDate,
   });
 
-  const recurrence = await inter.createRecurrence({
-    amount: input.amount,
-    intervalMonths: input.intervalMonths,
-    firstDueDate: input.firstDueDate,
-    debtorTaxId: input.debtor.taxId,
-    debtorName: input.debtor.name,
-    planCode: input.planCode,
-  });
-
-  const authorization = await inter.requestAuthorization(recurrence.recId, {
-    payerRequest: input.planCode,
-  });
-
-  assertSubscriptionTransition(subscription.status, 'PENDING_AUTH');
+  const { recurrence, authorization } = await authorizeAtInter(subscription, input);
 
   const updated = await updateSubscriptionStatus(subscription.id, 'PENDING_AUTH', {
     interRecId: recurrence.recId,
@@ -108,6 +148,7 @@ export async function cancelSubscription(
 
   const current = await findCurrentCycle(id);
   let pendingCycle: Cycle | null = null;
+  let cycleToCancel: Cycle | null = null;
 
   if (current) {
     if (current.status === 'FAILED' || current.status === 'RETRYING') {
@@ -117,7 +158,7 @@ export async function cancelSubscription(
       canCancelCycle(current.dueDate, today)
     ) {
       assertCycleTransition(current.status, 'CANCELED');
-      await updateCycleStatus(current.id, 'CANCELED');
+      cycleToCancel = current;
     } else if (['SCHEDULED', 'SENT'].includes(current.status)) {
       pendingCycle = current;
     }
@@ -127,14 +168,39 @@ export async function cancelSubscription(
     await inter.cancelRecurrence(subscription.interRecId);
   }
 
-  const updated = await updateSubscriptionStatus(id, 'CANCELED', {
-    canceledAt: new Date().toISOString(),
-  });
+  const updated = await withTransaction(async (client) => {
+    if (cycleToCancel) {
+      await updateCycleStatus(cycleToCancel.id, 'CANCELED', {}, client);
+    }
 
-  await insertEvent({
-    subscriptionId: id,
-    type: 'subscription.canceled',
-    payload: { pendingCycleId: pendingCycle?.id ?? null },
+    const result = await updateSubscriptionStatus(
+      id,
+      'CANCELED',
+      { canceledAt: new Date().toISOString() },
+      client,
+    );
+
+    const event = await insertEvent(
+      {
+        subscriptionId: id,
+        type: 'subscription.canceled',
+        payload: { pendingCycleId: pendingCycle?.id ?? null },
+      },
+      client,
+    );
+
+    await enqueueDelivery(
+      event.id,
+      'subscription.canceled',
+      {
+        subscriptionId: id,
+        externalUserId: subscription.externalUserId,
+        pendingCycleSeq: pendingCycle?.seq ?? null,
+      },
+      client,
+    );
+
+    return result;
   });
 
   return { subscription: updated, pendingCycle };
