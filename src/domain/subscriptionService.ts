@@ -109,11 +109,16 @@ export async function cancelSubscription(
   const current = await findCurrentCycle(id);
   let pendingCycle: Cycle | null = null;
 
-  if (current && ['SCHEDULED', 'SENT', 'FAILED', 'RETRYING'].includes(current.status)) {
-    if (canCancelCycle(current.dueDate, today)) {
+  if (current) {
+    if (current.status === 'FAILED' || current.status === 'RETRYING') {
+      pendingCycle = current;
+    } else if (
+      ['SCHEDULED', 'SENT'].includes(current.status) &&
+      canCancelCycle(current.dueDate, today)
+    ) {
       assertCycleTransition(current.status, 'CANCELED');
       await updateCycleStatus(current.id, 'CANCELED');
-    } else {
+    } else if (['SCHEDULED', 'SENT'].includes(current.status)) {
       pendingCycle = current;
     }
   }

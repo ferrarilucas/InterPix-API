@@ -56,6 +56,67 @@ describe('cancelSubscription', () => {
     expect(result.pendingCycle?.status).toBe('SENT');
   });
 
+  it('cancela o ciclo quando hoje e exatamente a vespera do vencimento', async () => {
+    vi.spyOn(inter, 'cancelRecurrence').mockResolvedValue(undefined);
+
+    const subscription = await createFixture({ nextDueDate: '2026-09-20' });
+    await updateSubscriptionStatus(subscription.id, 'ACTIVE', { interRecId: `rec-c4-${runId}` });
+    await insertCycle({
+      subscriptionId: subscription.id,
+      seq: 1,
+      dueDate: '2026-09-20',
+      amount: '29.90',
+    });
+
+    const result = await cancelSubscription(subscription.id, '2026-09-19');
+
+    expect(result.subscription.status).toBe('CANCELED');
+    expect(result.pendingCycle).toBeNull();
+  });
+
+  it('devolve o ciclo FAILED como pendente mesmo com vencimento futuro', async () => {
+    vi.spyOn(inter, 'cancelRecurrence').mockResolvedValue(undefined);
+
+    const subscription = await createFixture({ nextDueDate: '2026-09-20' });
+    await updateSubscriptionStatus(subscription.id, 'ACTIVE', { interRecId: `rec-c5-${runId}` });
+    const cycle = await insertCycle({
+      subscriptionId: subscription.id,
+      seq: 1,
+      dueDate: '2026-09-20',
+      amount: '29.90',
+    });
+    await updateCycleStatus(cycle.id, 'SENT', { interTxid: `txid-c5-${runId}` });
+    await updateCycleStatus(cycle.id, 'FAILED');
+
+    const result = await cancelSubscription(subscription.id, '2026-09-10');
+
+    expect(result.subscription.status).toBe('CANCELED');
+    expect(result.pendingCycle?.id).toBe(cycle.id);
+    expect(result.pendingCycle?.status).toBe('FAILED');
+  });
+
+  it('devolve o ciclo RETRYING como pendente mesmo com vencimento futuro', async () => {
+    vi.spyOn(inter, 'cancelRecurrence').mockResolvedValue(undefined);
+
+    const subscription = await createFixture({ nextDueDate: '2026-09-20' });
+    await updateSubscriptionStatus(subscription.id, 'ACTIVE', { interRecId: `rec-c6-${runId}` });
+    const cycle = await insertCycle({
+      subscriptionId: subscription.id,
+      seq: 1,
+      dueDate: '2026-09-20',
+      amount: '29.90',
+    });
+    await updateCycleStatus(cycle.id, 'SENT', { interTxid: `txid-c6-${runId}` });
+    await updateCycleStatus(cycle.id, 'FAILED');
+    await updateCycleStatus(cycle.id, 'RETRYING');
+
+    const result = await cancelSubscription(subscription.id, '2026-09-10');
+
+    expect(result.subscription.status).toBe('CANCELED');
+    expect(result.pendingCycle?.id).toBe(cycle.id);
+    expect(result.pendingCycle?.status).toBe('RETRYING');
+  });
+
   it('recusa cancelar assinatura ja cancelada', async () => {
     vi.spyOn(inter, 'cancelRecurrence').mockResolvedValue(undefined);
 
