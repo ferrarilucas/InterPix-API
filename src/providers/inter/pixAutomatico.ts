@@ -58,6 +58,31 @@ function fail(operation: string, error: unknown): never {
   throw AppError.upstream();
 }
 
+const ALREADY_GONE_HINTS = ['cancelad', 'nao encontrad', 'nao existe', 'inexistent', 'not found'];
+
+function isRecurrenceAlreadyGone(error: unknown): boolean {
+  if (!axios.isAxiosError(error)) {
+    return false;
+  }
+
+  const status = error.response?.status;
+
+  if (status === 404) {
+    return true;
+  }
+
+  if (status !== 400) {
+    return false;
+  }
+
+  const body = JSON.stringify(error.response?.data ?? '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '');
+
+  return ALREADY_GONE_HINTS.some((hint) => body.includes(hint));
+}
+
 function periodicidadeFromMonths(intervalMonths: number): string {
   if (intervalMonths === 12) {
     return 'ANUAL';
@@ -189,6 +214,14 @@ export async function cancelRecurrence(recId: string): Promise<void> {
       { headers: { 'Content-Type': 'application/json' } },
     );
   } catch (error) {
+    if (isRecurrenceAlreadyGone(error)) {
+      logger.warn('recorrencia ja cancelada ou inexistente no inter', {
+        operation: 'cancelRecurrence',
+        status: axios.isAxiosError(error) ? error.response?.status : undefined,
+      });
+      return;
+    }
+
     fail('cancelRecurrence', error);
   }
 }

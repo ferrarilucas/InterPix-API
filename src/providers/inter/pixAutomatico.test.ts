@@ -1,7 +1,13 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { api } from '../../shared/api';
 import { AppError } from '../../shared/errors';
-import { createCharge, createRecurrence, getChargeByTxid, getRecurrence } from './pixAutomatico';
+import {
+  cancelRecurrence,
+  createCharge,
+  createRecurrence,
+  getChargeByTxid,
+  getRecurrence,
+} from './pixAutomatico';
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -150,6 +156,61 @@ describe('mapeamento de status de recorrencia', () => {
 
     expect(result.status).toBe('UNKNOWN');
     expect(result.rawStatus).toBe('ALGO_NOVO');
+  });
+});
+
+describe('cancelRecurrence', () => {
+  it('trata recorrencia inexistente (404) como sucesso', async () => {
+    vi.spyOn(api, 'patch').mockRejectedValue({
+      isAxiosError: true,
+      response: { status: 404, data: { title: 'Recurso nao encontrado' } },
+      message: 'not found',
+    });
+
+    await expect(cancelRecurrence('rec-1')).resolves.toBeUndefined();
+  });
+
+  it('trata recorrencia ja cancelada (400) como sucesso', async () => {
+    vi.spyOn(api, 'patch').mockRejectedValue({
+      isAxiosError: true,
+      response: {
+        status: 400,
+        data: {
+          title: 'Requisicao invalida',
+          violacoes: [{ razao: 'Recorrencia ja esta CANCELADA' }],
+        },
+      },
+      message: 'bad request',
+    });
+
+    await expect(cancelRecurrence('rec-2')).resolves.toBeUndefined();
+  });
+
+  it('mantem AppError.upstream para falha real do Inter', async () => {
+    vi.spyOn(api, 'patch').mockRejectedValue({
+      isAxiosError: true,
+      response: { status: 500, data: { detalhe: 'segredo interno' } },
+      message: 'boom',
+    });
+
+    await expect(cancelRecurrence('rec-3')).rejects.toMatchObject({ code: 'UPSTREAM_ERROR' });
+    await expect(cancelRecurrence('rec-3')).rejects.toBeInstanceOf(AppError);
+  });
+
+  it('mantem AppError.upstream para 400 que nao indica cancelamento previo', async () => {
+    vi.spyOn(api, 'patch').mockRejectedValue({
+      isAxiosError: true,
+      response: { status: 400, data: { title: 'Valor invalido' } },
+      message: 'bad request',
+    });
+
+    await expect(cancelRecurrence('rec-4')).rejects.toMatchObject({ code: 'UPSTREAM_ERROR' });
+  });
+
+  it('mantem AppError.upstream para falha de rede', async () => {
+    vi.spyOn(api, 'patch').mockRejectedValue(new Error('falha de rede generica'));
+
+    await expect(cancelRecurrence('rec-5')).rejects.toMatchObject({ code: 'UPSTREAM_ERROR' });
   });
 });
 
