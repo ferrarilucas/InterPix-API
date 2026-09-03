@@ -1,6 +1,16 @@
 const MIN_LEAD_DAYS = 2;
 const MAX_LEAD_DAYS = 10;
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
+const BUSINESS_TIMEZONE = 'America/Sao_Paulo';
+
+export function businessToday(now: Date = new Date()): string {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: BUSINESS_TIMEZONE,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(now);
+}
 
 function toUtc(date: string): number {
   const [year, month, day] = date.split('-').map(Number);

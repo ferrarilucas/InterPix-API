@@ -1,11 +1,28 @@
 import { describe, expect, it } from 'vitest';
 import {
   addMonths,
+  businessToday,
   canCancelCycle,
   isWithinSendWindow,
   nextRetryDate,
   shouldSendCharge,
 } from './schedule';
+
+describe('businessToday', () => {
+  it('usa a data do horario de Brasilia perto da meia-noite UTC, nao a data UTC', () => {
+    const result = businessToday(new Date('2026-09-20T23:30:00-03:00'));
+    expect(result).toBe('2026-09-20');
+    expect(result).not.toBe('2026-09-21');
+  });
+
+  it('vira a data logo apos a meia-noite em Brasilia', () => {
+    expect(businessToday(new Date('2026-09-21T00:30:00-03:00'))).toBe('2026-09-21');
+  });
+
+  it('coincide com a data UTC no meio do dia', () => {
+    expect(businessToday(new Date('2026-09-20T12:00:00-03:00'))).toBe('2026-09-20');
+  });
+});
 
 describe('isWithinSendWindow', () => {
   it('aceita envio a 10 dias do vencimento', () => {
