@@ -182,6 +182,56 @@ describe('sendCharges', () => {
 
     expect((await findCycleById(cycle.id))?.status).toBe('SENT');
   });
+
+  it('nao ressuscita ciclo cancelado entre a listagem e a gravacao do txid', async () => {
+    const subscription = await createFixture({ nextDueDate: '2026-12-12' });
+    await updateSubscriptionStatus(subscription.id, 'ACTIVE', { interRecId: randomUUID() });
+    const cycle = await insertCycle({
+      subscriptionId: subscription.id,
+      seq: 1,
+      dueDate: '2026-12-12',
+      amount: '29.90',
+    });
+
+    const recId = (await findSubscriptionById(subscription.id))?.interRecId;
+    const createCharge = vi.spyOn(inter, 'createCharge');
+    const realFindSubscription = subscriptionsRepo.findSubscriptionById;
+    vi.spyOn(subscriptionsRepo, 'findSubscriptionById').mockImplementation(async (id) => {
+      await updateCycleStatus(cycle.id, 'CANCELED');
+      return realFindSubscription(id);
+    });
+
+    await sendCharges('2026-12-05');
+
+    expect(createCharge.mock.calls.some((call) => call[0].recId === recId)).toBe(false);
+    expect((await findCycleById(cycle.id))?.status).toBe('CANCELED');
+    const types = (await listEventsBySubscription(subscription.id)).map((event) => event.type);
+    expect(types).not.toContain('cycle.sent');
+  });
+
+  it('nao ressuscita ciclo cancelado durante a chamada ao Inter', async () => {
+    const subscription = await createFixture({ nextDueDate: '2026-12-13' });
+    await updateSubscriptionStatus(subscription.id, 'ACTIVE', { interRecId: randomUUID() });
+    const cycle = await insertCycle({
+      subscriptionId: subscription.id,
+      seq: 1,
+      dueDate: '2026-12-13',
+      amount: '29.90',
+    });
+
+    vi.spyOn(inter, 'createCharge').mockImplementation(async () => {
+      await updateCycleStatus(cycle.id, 'CANCELED');
+      return { txid: 'txid-corrida', status: 'CREATED', rawStatus: 'CRIADA' };
+    });
+
+    await sendCharges('2026-12-06');
+
+    const after = await findCycleById(cycle.id);
+    expect(after?.status).toBe('CANCELED');
+    expect(await countCycleAttempts(cycle.id)).toBe(0);
+    const types = (await listEventsBySubscription(subscription.id)).map((event) => event.type);
+    expect(types).not.toContain('cycle.sent');
+  });
 });
 
 describe('cancelUnsendableCycles', () => {

@@ -142,6 +142,23 @@ export async function updateCycleStatus(
   return toCycle(rows[0]);
 }
 
+export async function patchCycleTxid(
+  id: string,
+  txid: string,
+  client?: PoolClient,
+): Promise<Cycle | null> {
+  const rows = await query<CycleRow>(
+    `UPDATE cycles SET
+       inter_txid = $2,
+       updated_at = now()
+     WHERE id = $1
+     RETURNING *`,
+    [id, txid],
+    client,
+  );
+  return rows[0] ? toCycle(rows[0]) : null;
+}
+
 export async function updateCycleStatusIf(
   id: string,
   expectedStatus: CycleStatus,
@@ -181,6 +198,19 @@ export async function listCyclesByStatusInRange(
      WHERE status = ANY($1::cycle_status[]) AND due_date >= $2 AND due_date <= $3
      ORDER BY due_date`,
     [statuses, fromDate, toDate],
+  );
+  return rows.map(toCycle);
+}
+
+export async function listCyclesByStatusBefore(
+  statuses: CycleStatus[],
+  beforeDate: string,
+): Promise<Cycle[]> {
+  const rows = await query<CycleRow>(
+    `SELECT * FROM cycles
+     WHERE status = ANY($1::cycle_status[]) AND due_date < $2
+     ORDER BY due_date`,
+    [statuses, beforeDate],
   );
   return rows.map(toCycle);
 }

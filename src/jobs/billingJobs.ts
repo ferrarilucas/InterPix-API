@@ -12,12 +12,15 @@ import {
 import {
   countCycleAttempts,
   findCurrentCycle,
+  findCycleById,
   findLatestCycleAttempt,
   insertCycle,
   insertCycleAttempt,
   listCyclesByStatus,
+  listCyclesByStatusBefore,
   listCyclesByStatusInRange,
   listCyclesBySubscription,
+  patchCycleTxid,
   updateCycleStatus,
   updateCycleStatusIf,
 } from '../repositories/cycles';
@@ -187,8 +190,16 @@ export async function sendCharges(today: string): Promise<number> {
     const txid = cycle.interTxid ?? newTxid();
 
     try {
-      if (!cycle.interTxid) {
-        await updateCycleStatus(cycle.id, cycle.status, { interTxid: txid });
+      const persisted = cycle.interTxid
+        ? await findCycleById(cycle.id)
+        : await patchCycleTxid(cycle.id, txid);
+
+      if (!persisted || persisted.status !== 'SCHEDULED') {
+        logger.warn('ciclo ignorado: status mudou antes do envio', {
+          cycleId: cycle.id,
+          status: persisted?.status ?? null,
+        });
+        continue;
       }
 
       await inter.createCharge({
@@ -198,8 +209,14 @@ export async function sendCharges(today: string): Promise<number> {
         amount: cycle.amount,
       });
 
-      assertCycleTransition(cycle.status, 'SENT');
-      await updateCycleStatus(cycle.id, 'SENT');
+      assertCycleTransition('SCHEDULED', 'SENT');
+      const marked = await updateCycleStatusIf(cycle.id, 'SCHEDULED', 'SENT');
+
+      if (!marked) {
+        logger.warn('ciclo ignorado: status mudou durante o envio', { cycleId: cycle.id });
+        continue;
+      }
+
       await insertCycleAttempt({
         cycleId: cycle.id,
         attemptNumber: 1,
