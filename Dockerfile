@@ -14,6 +14,7 @@ COPY package*.json ./
 RUN npm install --omit=dev
 
 COPY --from=builder /usr/src/app/dist ./dist
+COPY --from=builder /usr/src/app/migrations ./migrations
 
 EXPOSE 3000
 

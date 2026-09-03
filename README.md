@@ -4,293 +4,288 @@
 ![Express.js](https://img.shields.io/badge/Express.js-4.x-green?style=for-the-badge&logo=express)
 ![TypeScript](https://img.shields.io/badge/TypeScript-5.x-blue?style=for-the-badge&logo=typescript)
 
-API facilitada para integração com o sistema de pagamentos PIX do Banco Inter, permitindo a criação e consulta de cobranças imediatas e recorrentes, armazenamento de transações no Supabase e callbacks automáticos quando o pagamento é concluído.
+API de assinaturas com Pix Automático (Banco Inter), usada por um SaaS em Next.js para criar assinaturas, receber cobranças recorrentes e ser notificada por webhook quando um ciclo é pago, falha ou a assinatura muda de estado.
 
-## Funcionalidades
+A API guarda o próprio estado em Postgres (assinaturas, ciclos, tentativas, eventos), executa os jobs diários de geração/envio/retentativa de cobrança e entrega eventos ao SaaS via webhook assinado com HMAC, com retentativa exponencial.
 
-- Criação de cobranças PIX imediatas (`/charge`).
-- Consulta de cobranças PIX existentes (`/charge/:txid`).
-- Criação de cobranças PIX recorrentes (`/recurring-charge`).
-- Consulta de cobranças recorrentes (`/recurring-charge/:txid`).
-- Autorização de cobranças recorrentes (`/recurring-charge/:txid/authorize`).
-- Geração de QR Code e linha digitável (copia e cola).
+## Sumário
+
+- [Arquitetura](#arquitetura)
+- [Configuração](#configuração)
+- [Como executar](#como-executar)
+- [Endpoints](#endpoints)
+- [Webhook de saída (API → SaaS)](#webhook-de-saída-api--saas)
+- [Regras de integração](#regras-de-integração)
+- [Lacunas conhecidas](#lacunas-conhecidas)
+- [Notas operacionais](#notas-operacionais)
 
 ## Arquitetura
 
-O projeto foi estruturado de forma modular para facilitar a manutenção e evitar duplicação de código:
-
-- **`src/server.ts`**: Servidor Express com as rotas da API e job de cron
-- **`src/shared/api.ts`**: Configuração da API do Banco Inter e autenticação (OAuth)
-- **`src/pix.ts`**: Cobranças PIX imediatas e consulta de recebimentos
-- **`src/recurringPix.ts`**: Cobranças PIX com vencimento/recorrentes
-- **`src/shared/supabase.ts`**: Cliente do Supabase
-- **`src/repositories/transactions.ts`**: Persistência de transações e atualizações de status/taxId
-- **`src/types/transactions.ts`**: Tipos de transações persistidas
-
-## Pré-requisitos
-
-- Node.js (versão 18.x ou superior)
-- Conta PJ no Banco Inter com API PIX habilitada.
-
-## Configuração do Projeto
-
-1.  **Clone o repositório:**
-
-    ```bash
-    git clone https://github.com/seu-usuario/interpix-api.git
-    cd interpix-api
-    ```
-
-2.  **Instale as dependências:**
-
-    Como o projeto usa `package-lock.json`, o `npm` é o gerenciador de pacotes recomendado.
-
-    ```bash
-    npm install
-    ```
-
-3.  **Certificados do Banco Inter:**
-
-    Para se comunicar com a API do Inter, você precisará dos certificados de autenticação.
-
-    - Siga o [tutorial oficial do Banco Inter](https://developers.bancointer.com.br/docs/introducao) para criar sua aplicação e obter os arquivos de certificado (`.cer`) e chave (`.key`).
-    - Salve esses arquivos em uma pasta chamada `certs` na raiz do projeto.
-
-4.  **Variáveis de Ambiente:**
-
-    Crie um arquivo `.env` na raiz do projeto, baseado no exemplo abaixo. Substitua os valores pelas suas credenciais e caminhos de arquivo.
-
-    ```env
-    # Certificados (caminhos relativos à raiz do projeto)
-    INTER_CERT_PATH=./certs/seu-certificado.cer
-    INTER_KEY_PATH=./certs/sua-chave.key
-
-    # Credenciais da sua aplicação no Banco Inter
-    INTER_CLIENT_ID=seu-client-id
-    INTER_CLIENT_SECRET=seu-client-secret
-
-    # Chave PIX usada para gerar as cobranças
-    PIX_KEY=sua-chave-pix
-
-    # Supabase (use Service Role Key no backend)
-    SUPABASE_URL=https://xxxx.supabase.co
-    SUPABASE_KEY=eyJhbGciOiJI...service_role
-    # Opcional: nome da tabela; default: transactions
-    SUPABASE_TRANSACTIONS_TABLE=transactions
-    ```
-
-## Como Executar
-
-1.  **Compile o código TypeScript:**
-
-    ```bash
-    npm run build
-    ```
-
-2.  **Inicie o servidor:**
-
-    ```bash
-    npm run start
-    ```
-
-    O servidor estará rodando em `http://localhost:3000`.
-
-## Banco de Dados (Supabase)
-
-Crie a tabela (ajuste o nome conforme `SUPABASE_TRANSACTIONS_TABLE`):
-
-```sql
-create extension if not exists pgcrypto;
-
-create table if not exists transactions (
-  id uuid primary key default gen_random_uuid(),
-  txid text not null unique,
-  internal_id text not null,
-  tax_id text null,
-  status text not null check (status in ('ACTIVE','COMPLETED','REMOVED_BY_USER','REMOVED_BY_PSP')),
-  callback_url text null,
-  amount text not null,
-  pix_copy_paste text null,
-  created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now()
-);
-
-create index if not exists idx_transactions_status on transactions (status);
-create index if not exists idx_transactions_created_at on transactions (created_at);
-
-create or replace function set_updated_at()
-returns trigger as $$
-begin
-  new.updated_at = now();
-  return new;
-end;
-$$ language plpgsql;
-
-drop trigger if exists trg_transactions_set_updated_at on transactions;
-create trigger trg_transactions_set_updated_at
-before update on transactions
-for each row execute function set_updated_at();
-```
-
-RLS: utilize a Service Role Key no backend OU crie políticas que permitam INSERT/SELECT/UPDATE para o role adequado.
-
-## Desenvolvimento
-
-### Estrutura de Pastas
-
 ```
 src/
-├── shared/
-│   ├── api.ts            # Configuração da API do Banco Inter (OAuth)
-│   └── supabase.ts       # Cliente Supabase
-├── repositories/
-│   └── transactions.ts   # Persistência de transações
-├── types/
-│   ├── index.ts          # Exportações centralizadas dos tipos
-│   ├── api-requests.ts   # Interfaces da API pública (inglês)
-│   ├── inter-api.ts      # Interfaces da API do Banco Inter (pt-BR)
-│   ├── transactions.ts   # Tipos da entidade persistida
-│   └── mappers.ts        # Mapeamentos entre formatos
-├── pix.ts                # Cobranças imediatas e recebimentos
-├── recurringPix.ts       # Cobranças com vencimento
-└── server.ts             # Servidor Express, rotas e cron
+├── server.ts                 # Entrypoint: roda migrations, sobe o Express e o scheduler
+├── http/
+│   ├── app.ts                 # Monta rotas e middlewares (auth, error handler)
+│   ├── middlewares/            # requireAuth (Bearer), errorHandler, requestContext
+│   └── routes/                 # subscriptions, interWebhook
+├── domain/                    # Máquina de estados, regras de janela/dunning, dispatcher de webhook
+├── jobs/                      # scheduler (cron) + billingJobs (geração/envio/retentativa/reconciliação)
+├── providers/inter/            # Integração com a API do Banco Inter (rec, solicrec, cobr, cobv)
+├── repositories/               # Acesso a Postgres (subscriptions, cycles, events, webhookDeliveries, ...)
+└── shared/                    # config validada (zod), logger com máscara de CPF/CNPJ, db (pg), migrations
 ```
 
-### Scripts Disponíveis
+`src/repositories/transactions.ts`, `src/pix.ts` e `src/providers/inter/cobv.ts` são código legado de cobrança avulsa (`/pix/v2/cob` e `/pix/v2/cobv`). Não estão mais expostos por nenhuma rota HTTP: o `server.ts` atual só sobe o app de assinaturas descrito abaixo. Esses módulos foram mantidos e a camada de persistência foi migrada para Postgres puro (antes usava Supabase), mas não há rota ativa que os utilize.
 
-- `npm run build`: Compila o código TypeScript
-- `npm run start`: Inicia o servidor em produção
-- `npm run dev`: Compila e inicia o servidor em desenvolvimento
-- `npm run type-check`: Verifica os tipos sem gerar arquivos
+## Configuração
 
-### Mapeamento de Dados
+Variáveis de ambiente obrigatórias (validadas por `src/shared/config.ts`; o processo não sobe se alguma faltar):
 
-A API utiliza um sistema de mapeamento automático que converte:
+| Variável | Descrição |
+|---|---|
+| `DATABASE_URL` | String de conexão Postgres usada em runtime |
+| `API_TOKEN` | Token estático (mínimo 24 caracteres) exigido no header `Authorization: Bearer` |
+| `SAAS_WEBHOOK_URL` | URL do SaaS que recebe os eventos de webhook |
+| `SAAS_WEBHOOK_SECRET` | Segredo (mínimo 24 caracteres) usado para assinar o webhook em HMAC-SHA256 |
+| `INTER_CLIENT_ID` | Client ID da aplicação no Banco Inter |
+| `INTER_CLIENT_SECRET` | Client secret da aplicação no Banco Inter |
+| `INTER_CERT_PATH` | Caminho do certificado `.crt`/`.cer` usado no mTLS com o Inter |
+| `INTER_KEY_PATH` | Caminho da chave privada correspondente ao certificado |
+| `PIX_KEY` | Chave Pix usada para gerar as cobranças |
+| `CHARGE_LEAD_DAYS` | Dias de antecedência para envio da cobrança (padrão 3, entre 2 e 10) |
+| `DUNNING_WINDOW_DAYS` | Janela de retentativa após vencimento (padrão 7, entre 1 e 7) |
+| `PORT` | Porta HTTP (padrão 3000) |
 
-- **Entrada (API Pública)**: Campos em inglês (`calendar`, `debtor`, `value`, `key`, etc.)
-- **Processamento Interno**: Campos em português para comunicação com o Banco Inter (`calendario`, `devedor`, `valor`, `chave`, etc.)
-- **Saída (API Pública)**: Resposta mapeada de volta para inglês com status traduzidos
+Além de `DATABASE_URL`, a suíte de testes precisa de `DATABASE_URL_TEST` apontando para um Postgres alcançável (local ou em container) — os testes de repositório rodam migrations reais e fazem I/O contra esse banco. Sem ele, `npm test` falha ao subir. Veja `.env.example` para um modelo completo.
 
-Isso garante que a API seja internacional e fácil de usar, enquanto mantém compatibilidade total com a API do Banco Inter.
+## Como executar
 
----
+```bash
+npm install
+npm run build
+npm run migrate     # aplica as migrations pendentes em migrations/*.sql contra DATABASE_URL
+npm start
+```
 
-## Persistência e Cron
+Em desenvolvimento, `npm run dev` compila e sobe o servidor. `npm run type-check` roda apenas o `tsc --noEmit`. O próprio `server.ts` também roda `runMigrations` automaticamente ao subir, então `npm run migrate` é redundante em produção — útil principalmente para aplicar migrations sem subir o servidor (ex.: em um step de deploy separado).
 
-- Ao criar `/charge`, a API salva no Supabase: `txid`, `internalId`, `taxId` (opcional), `status`, `callbackUrl` (opcional), `amount` e `pix_copy_paste`.
-- Um cron job roda a cada 30 segundos e verifica transações `ACTIVE` criadas nos últimos 40 minutos:
-  - Consulta o status no Inter; se mudar para `COMPLETED`, registra no banco
-  - Busca o CPF/CNPJ do pagador via `GET /pix/v2/pix` (requer escopo `pix.read`) e atualiza `tax_id` quando disponível
-  - Se houver `callbackUrl`, envia POST com `{ status, taxId, internalId }`
+Testes: `npm test` (ou `npx vitest run`). Requer `DATABASE_URL_TEST` configurado em `.env.test` e um Postgres alcançável nesse endereço.
 
----
+## Endpoints
 
-## API Endpoints
+Todos os endpoints abaixo, exceto `GET /health` e `POST /webhooks/inter`, exigem o header:
 
-A seguir estão os detalhes dos endpoints disponíveis na API.
+```
+Authorization: Bearer <API_TOKEN>
+```
 
-### Cobrança Imediata
+A comparação do token é feita em tempo constante (`timingSafeEqual`). Requisição sem o header, ou com token incorreto, recebe `401 UNAUTHORIZED`.
 
-#### 1. Criar Cobrança (`POST /charge`)
+Todo erro segue o formato:
 
-Cria uma nova cobrança PIX com um valor específico e registra metadados para acompanhamento.
+```json
+{ "code": "NOT_FOUND", "message": "Assinatura nao encontrada.", "details": [] }
+```
 
-**Request Body:**
+(`details` só aparece em erros de validação, `400 BAD_REQUEST`.)
+
+### `GET /health`
+
+Sem autenticação. Usado para checagem de liveness.
+
+```bash
+curl http://localhost:3000/health
+```
+
+```json
+{ "status": "ok" }
+```
+
+### `POST /subscriptions`
+
+Cria uma assinatura, registra a recorrência (`rec`) no Inter e solicita a autorização do pagador (`solicrec`).
+
+```bash
+curl -X POST http://localhost:3000/subscriptions \
+  -H "Authorization: Bearer $API_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "externalUserId": "usr_123",
+    "planCode": "mensal_29_90",
+    "amount": "29.90",
+    "intervalMonths": 1,
+    "firstDueDate": "2026-09-20",
+    "debtor": { "taxId": "12345678901", "name": "Fulano de Tal" }
+  }'
+```
+
+Regras de validação (rejeitadas com `400 BAD_REQUEST`):
+- `amount`: string no formato `"99.90"` (duas casas decimais).
+- `intervalMonths`: inteiro entre 1 e 12.
+- `firstDueDate`: `YYYY-MM-DD`, não pode estar no passado.
+- `debtor.taxId`: 11 dígitos (CPF) ou 14 dígitos (CNPJ), só números.
+
+Resposta (`201`):
 
 ```json
 {
-  "value": 10.50,
-  "internalId": "order-abc-123",
-  "callbackUrl": "https://minha.app/callback",
-  "taxId": "12345678901"
+  "id": "6a1e...",
+  "status": "PENDING_AUTH",
+  "externalUserId": "usr_123",
+  "planCode": "mensal_29_90",
+  "amount": "29.90",
+  "nextDueDate": "2026-09-20",
+  "authorization": {
+    "pixCopyPaste": "00020126...",
+    "url": "https://qrcode.inter.com.br/..."
+  }
 }
 ```
 
-**Exemplo com cURL:**
+Use `authorization.pixCopyPaste`/`authorization.url` para o pagador autorizar a recorrência no app do banco dele. A assinatura fica em `PENDING_AUTH` até o Inter confirmar a autorização (ver [webhook de saída](#webhook-de-saída-api--saas)).
+
+### `GET /subscriptions/:id`
 
 ```bash
-curl -X POST http://localhost:3000/charge \
--H "Content-Type: application/json" \
--d '{
-  "value": 10.50,
-  "internalId": "order-abc-123",
-  "callbackUrl": "https://minha.app/callback",
-  "taxId": "12345678901"
-}'
+curl http://localhost:3000/subscriptions/6a1e... \
+  -H "Authorization: Bearer $API_TOKEN"
 ```
 
-**Response (201 Created):**
-Retorna o objeto completo da cobrança criada, incluindo `txid`, `status`, `value.original`, `pixCopyPaste` e `location`.
-
-#### 2. Consultar Cobrança (`GET /charge/:txid`)
-
-Consulta uma cobrança PIX existente usando o `txid`.
-
-**Exemplo com cURL:**
-
-```bash
-curl http://localhost:3000/charge/seu-txid-aqui
-```
-
-**Response (200 OK):**
-Retorna os detalhes completos da cobrança.
-
----
-
-### Cobrança Recorrente
-
-#### 1. Criar Cobrança Recorrente (`POST /recurring-charge`)
-
-Cria uma nova cobrança PIX recorrente. O corpo da requisição deve seguir a [documentação oficial do Banco Inter para cobranças com vencimento](https://developers.bancointer.com.br/docs/pix/cobranca-com-vencimento_v2_requisicao#tag/Cobranca-com-Vencimento/operation/putCobvTxid).
-
-**Request Body (Exemplo):**
+Resposta (`200`):
 
 ```json
 {
-  "calendar": {
-    "dueDate": "2024-12-30",
-    "validityAfterDue": 60
-  },
-  "debtor": {
-    "cpf": "12345678901",
-    "name": "Cliente Exemplo"
-  },
-  "value": {
-    "original": "50.00"
-  },
-  "key": "sua-chave-pix"
+  "id": "6a1e...",
+  "status": "ACTIVE",
+  "externalUserId": "usr_123",
+  "planCode": "mensal_29_90",
+  "amount": "29.90",
+  "nextDueDate": "2026-10-20",
+  "authorizedAt": "2026-09-18T14:02:00.000Z",
+  "canceledAt": null,
+  "cycles": [
+    { "seq": 1, "dueDate": "2026-09-20", "amount": "29.90", "status": "PAID", "paidAt": "2026-09-19T09:00:00.000Z" }
+  ]
 }
 ```
 
-**Exemplo com cURL:**
+`404 NOT_FOUND` se o id não existir.
+
+### `POST /subscriptions/:id/cancel`
 
 ```bash
-curl -X POST http://localhost:3000/recurring-charge \
--H "Content-Type: application/json" \
--d '{
-  "calendar": { "dueDate": "2024-12-30", "validityAfterDue": 60 },
-  "debtor": { "cpf": "12345678901", "name": "Cliente Exemplo" },
-  "value": { "original": "50.00" },
-  "key": "sua-chave-pix"
-}'
+curl -X POST http://localhost:3000/subscriptions/6a1e.../cancel \
+  -H "Authorization: Bearer $API_TOKEN"
 ```
 
-#### 2. Consultar Cobrança Recorrente (`GET /recurring-charge/:txid`)
+Resposta (`200`) quando não há ciclo pendente:
 
-Consulta uma cobrança recorrente existente.
-
-**Exemplo com cURL:**
-
-```bash
-curl http://localhost:3000/recurring-charge/seu-txid-aqui
+```json
+{ "id": "6a1e...", "status": "CANCELED", "canceledAt": "2026-09-25T12:00:00.000Z", "pendingCycle": null }
 ```
 
-#### 3. Autorizar Cobrança Recorrente (`POST /recurring-charge/:txid/authorize`)
+Se já existia uma cobrança enviada (ou falhada, em retentativa) que não pôde ser cancelada a tempo, `pendingCycle` vem preenchido para o SaaS avisar o usuário que aquela cobrança específica ainda pode ser debitada:
 
-Autoriza uma cobrança recorrente para que ela possa ser paga.
+```json
+{
+  "id": "6a1e...",
+  "status": "CANCELED",
+  "canceledAt": "2026-09-25T12:00:00.000Z",
+  "pendingCycle": {
+    "seq": 3,
+    "dueDate": "2026-09-26",
+    "status": "SENT",
+    "note": "Cobranca ja enviada; nao pode ser cancelada e seguira seu curso."
+  }
+}
+```
 
-**Exemplo com cURL:**
+Ver [regra 2](#regras-de-integração) sobre o comportamento em retry.
 
-```bash
-curl -X POST http://localhost:3000/recurring-charge/seu-txid-aqui/authorize
-``` 
+### `POST /webhooks/inter`
+
+Sem autenticação por `Authorization` (ver [lacunas conhecidas](#lacunas-conhecidas)). É o endpoint de entrada de notificações do Banco Inter. Responde `200 { "received": true }` imediatamente e processa o evento de forma assíncrona, reconsultando sempre o status real no Inter antes de mudar qualquer coisa — o corpo do webhook nunca é tratado como verdade absoluta.
+
+Este endpoint é consumido pelo Banco Inter, não pelo SaaS. Documentado aqui só para contexto operacional.
+
+## Webhook de saída (API → SaaS)
+
+A API entrega eventos para `SAAS_WEBHOOK_URL` via `POST`, com o corpo:
+
+```json
+{ "type": "cycle.paid", "eventId": "482", "data": { "subscriptionId": "6a1e...", "cycleSeq": 1, "amount": "29.90", "paidAt": "2026-09-19T09:00:00.000Z" } }
+```
+
+Headers:
+
+```
+Content-Type: application/json
+X-Signature: <hmac-sha256 hex>
+X-Timestamp: <epoch ms>
+```
+
+Eventos emitidos:
+
+| `type` | Quando ocorre | O que o SaaS deve fazer |
+|---|---|---|
+| `cycle.paid` | O ciclo (cobrança do mês) foi confirmado como pago no Inter | **Liberar o acesso ao plano** para o `externalUserId`/assinatura (ver [regra 1](#regras-de-integração)) |
+| `cycle.failed` | O débito automático do ciclo falhou (ex.: saldo insuficiente) | Registrar a falha; o plano continua ativo enquanto a API tenta novamente dentro da janela de dunning |
+| `subscription.authorized` | O pagador autorizou a recorrência no Inter | **Não** liberar o plano ainda — é só autorização, o débito acontece depois (ver [regra 1](#regras-de-integração)). Pode ser usado para UI ("autorização confirmada, aguardando primeira cobrança") |
+| `subscription.auth_denied` | O pagador negou ou a autorização expirou | Marcar a assinatura como não autorizada; nenhuma cobrança será enviada |
+| `subscription.past_due` | O ciclo atual falhou e a assinatura entrou em atraso, mas ainda dentro da janela de retentativa | Opcional: avisar o usuário que há uma cobrança pendente |
+| `subscription.suspended` | A janela de dunning esgotou sem pagamento | Suspender o acesso ao plano |
+
+Criação (`subscription.created`) e cancelamento (`subscription.canceled`) **não** geram webhook de saída — o SaaS já sabe desses eventos porque foi ele quem chamou `POST /subscriptions` e `POST /subscriptions/:id/cancel`, respectivamente.
+
+Retentativa (ver [regra 5](#regras-de-integração)): agendamento em minutos `[1, 5, 15, 60, 360, 1440]` a partir da primeira falha (1 min, 5 min, 15 min, 1h, 6h, 24h). Esgotadas as 6 tentativas, a entrega é marcada como definitivamente falha e abandonada — não há mais retentativa depois disso.
+
+## Regras de integração
+
+Estas cinco regras vieram de decisões de design tomadas durante a implementação. Cada uma evita um bug específico do lado do SaaS.
+
+1. **Libere o plano só em `cycle.paid`, nunca em `subscription.authorized`.** Autorização não é pagamento: o débito acontece depois e pode falhar (saldo insuficiente, cancelamento pelo pagador, etc.). Liberar acesso na autorização dá acesso a quem nunca pagou.
+
+2. **O cancelamento não é idempotente.** Uma segunda chamada a `POST /subscriptions/:id/cancel` depois de um timeout de rede — mesmo que a primeira chamada tenha sido bem-sucedida no servidor — retorna `409` com `code: "INVALID_TRANSITION"`, não `200`. O SaaS deve tratar `409 INVALID_TRANSITION` nesse endpoint como equivalente a sucesso (a assinatura já está cancelada).
+
+3. **Ignore qualquer evento cujo `eventId` seja menor que o último já processado para aquela assinatura.** Entregas podem chegar fora de ordem após uma retentativa — um `cycle.paid` atrasado chegando depois de um `subscription.canceled` mais recente reativaria indevidamente o acesso de alguém que já cancelou. `eventId` é monotonicamente crescente (é o id sequencial do evento no Postgres da API), então basta guardar o maior `eventId` já aplicado por assinatura e descartar qualquer entrega com `eventId` menor ou igual.
+
+4. **Verifique a assinatura do webhook.** HMAC-SHA256 sobre `${X-Timestamp}.${corpo bruto}` com `SAAS_WEBHOOK_SECRET`, comparado em tempo constante, rejeitando timestamps com mais de 5 minutos. Exemplo em Node usando o corpo bruto (é obrigatório usar os bytes originais — um corpo reserializado, mesmo com o mesmo conteúdo lógico, não bate com a assinatura por causa de diferenças de espaçamento/ordem de chaves):
+
+   ```ts
+   import { createHmac, timingSafeEqual } from 'crypto';
+
+   function isValidWebhook(rawBody: Buffer, timestamp: string, signature: string, secret: string): boolean {
+     const age = Date.now() - Number(timestamp);
+     if (!Number.isFinite(age) || age > 5 * 60 * 1000 || age < 0) {
+       return false;
+     }
+
+     const expected = createHmac('sha256', secret)
+       .update(`${timestamp}.${rawBody}`)
+       .digest('hex');
+
+     const expectedBuf = Buffer.from(expected, 'hex');
+     const receivedBuf = Buffer.from(signature, 'hex');
+     if (expectedBuf.length !== receivedBuf.length) {
+       return false;
+     }
+     return timingSafeEqual(expectedBuf, receivedBuf);
+   }
+   ```
+
+   Em Express, isso exige capturar o corpo bruto antes do parse JSON (ex.: `express.json({ verify: (req, _res, buf) => { req.rawBody = buf; } })`), já que `JSON.stringify(req.body)` não é garantido ser byte-a-byte igual ao que a API assinou.
+
+5. **Retentativa do webhook de saída.** A API tenta entregar cada evento em `1, 5, 15, 60, 360 e 1440` minutos após a falha anterior (6 tentativas ao todo). Esgotadas as tentativas, a entrega é abandonada e **não há mais nenhum reenvio automático**. Isso significa que o SaaS precisa estar disponível para receber o webhook, ou reconciliar por outro meio (ex.: consultar `GET /subscriptions/:id` periodicamente) para não perder eventos definitivamente descartados após uma indisponibilidade prolongada.
+
+## Lacunas conhecidas
+
+- **`createCharge` (envio de cobrança) e `requestAuthorization` (solicitação de autorização) não foram verificados ponta a ponta contra o sandbox do Inter.** `createCharge` exige um objeto `recebedor` e `requestAuthorization` exige dados bancários do pagador em `destinatario`, e nenhum dos dois existe hoje na configuração da aplicação. O restante do fluxo (criação de recorrência, consulta, cancelamento, processamento de webhook) foi implementado e testado com mocks da API do Inter, mas essas duas chamadas específicas não têm confirmação de que o payload enviado é aceito pelo Inter em sandbox.
+- **A origem do webhook de entrada (`POST /webhooks/inter`) não é validada.** Não há checagem de IP de origem, mTLS de entrada ou assinatura do lado do Inter nesse endpoint. A defesa atual é que o webhook é tratado apenas como um gatilho: todo evento é confirmado reconsultando o status real no Inter (`getChargeByTxid`/`getRecurrence`) antes de qualquer mudança de estado, então não é possível forjar um pagamento só enviando um POST para esse endpoint. Isso não impede, no entanto, tráfego indesejado ou consumo de recursos por chamadas repetidas.
+
+## Notas operacionais
+
+- **Variáveis de ambiente**: ver tabela em [Configuração](#configuração). `src/shared/config.ts` valida tudo com zod na subida do processo e falha rápido com uma mensagem listando o que está faltando.
+- **Migrations**: arquivos SQL em `migrations/*.sql`, aplicados em ordem alfabética por `src/shared/migrations.ts`. Cada arquivo roda dentro de uma transação e é registrado em `schema_migrations` para não rodar duas vezes. `server.ts` roda `runMigrations` automaticamente a cada subida; `npm run migrate` faz o mesmo manualmente contra `DATABASE_URL`.
+- **Logger**: `src/shared/logger.ts` mascara CPF/CNPJ e outros dados sensíveis antes de logar — não desabilite isso ao depurar em produção.
+- **Testes**: `npm test` roda contra um Postgres real (não há mocks de banco). Configure `DATABASE_URL_TEST` em `.env.test` apontando para uma instância descartável (local, Docker, etc.) antes de rodar a suíte.
+- **Jobs**: `startScheduler()` registra três crons — jobs diários (geração/envio/retentativa/expiração de cobranças, `0 8 * * *`), reconciliação horária (`0 * * * *`) e entrega de webhooks pendentes a cada minuto (`* * * * *`). Todos usam advisory lock do Postgres para evitar execução concorrente entre múltiplas instâncias do processo.

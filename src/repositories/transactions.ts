@@ -1,41 +1,58 @@
-import { getSupabaseClient } from '../shared/supabase';
+import { query } from '../shared/db';
 import { CreateStoredTransaction, StoredTransaction, TransactionStatus } from '../types/transactions';
-import 'dotenv/config';
 
-const TABLE = process.env.SUPABASE_TRANSACTIONS_TABLE || 'transactions';
+interface TransactionRow {
+  id: string;
+  txid: string;
+  internal_id: string;
+  tax_id: string | null;
+  status: TransactionStatus;
+  callback_url: string | null;
+  amount: string;
+  pix_copy_paste: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+function toDomain(row: TransactionRow): StoredTransaction {
+  return {
+    id: row.id,
+    txid: row.txid,
+    internalId: row.internal_id,
+    taxId: row.tax_id ?? undefined,
+    status: row.status,
+    callbackUrl: row.callback_url ?? undefined,
+    amount: row.amount,
+    pixCopyPaste: row.pix_copy_paste ?? undefined,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
 
 export async function insertTransaction(payload: CreateStoredTransaction): Promise<StoredTransaction> {
-  const supabase = getSupabaseClient();
-  const { data, error } = await supabase
-    .from(TABLE)
-    .insert({
-      txid: payload.txid,
-      internal_id: payload.internalId,
-      tax_id: payload.taxId,
-      status: payload.status,
-      callback_url: payload.callbackUrl,
-      amount: payload.amount,
-      pix_copy_paste: payload.pixCopyPaste,
-    })
-    .select('*')
-    .single();
-
-  if (error) {
-    throw new Error(error.message);
-  }
-
-  return mapRowToStoredTransaction(data);
+  const rows = await query<TransactionRow>(
+    `INSERT INTO transactions
+       (txid, internal_id, tax_id, status, callback_url, amount, pix_copy_paste)
+     VALUES ($1, $2, $3, $4, $5, $6, $7)
+     RETURNING *`,
+    [
+      payload.txid,
+      payload.internalId,
+      payload.taxId ?? null,
+      payload.status,
+      payload.callbackUrl ?? null,
+      payload.amount,
+      payload.pixCopyPaste ?? null,
+    ],
+  );
+  return toDomain(rows[0]);
 }
 
 export async function updateTransactionStatus(txid: string, status: TransactionStatus): Promise<void> {
-  const supabase = getSupabaseClient();
-  const { error } = await supabase
-    .from(TABLE)
-    .update({ status })
-    .eq('txid', txid);
-  if (error) {
-    throw new Error(error.message);
-  }
+  await query(
+    `UPDATE transactions SET status = $2, updated_at = now() WHERE txid = $1`,
+    [txid, status],
+  );
 }
 
 export async function markTransactionCompleted(txid: string): Promise<void> {
@@ -43,58 +60,18 @@ export async function markTransactionCompleted(txid: string): Promise<void> {
 }
 
 export async function updateTransactionTaxId(txid: string, taxId: string): Promise<void> {
-  const supabase = getSupabaseClient();
-  const { error } = await supabase
-    .from(TABLE)
-    .update({ tax_id: taxId })
-    .eq('txid', txid);
-  if (error) {
-    throw new Error(error.message);
-  }
+  await query(
+    `UPDATE transactions SET tax_id = $2, updated_at = now() WHERE txid = $1`,
+    [txid, taxId],
+  );
 }
 
 export async function listRecentIncompleteTransactions(sinceIso: string): Promise<StoredTransaction[]> {
-  const supabase = getSupabaseClient();
-  const { data, error } = await supabase
-    .from(TABLE)
-    .select('*')
-    .in('status', ['ACTIVE'])
-    .gte('created_at', sinceIso)
-    .order('created_at', { ascending: false });
-
-  if (error) {
-    throw new Error(error.message);
-  }
-
-  return (data || []).map(mapRowToStoredTransaction);
+  const rows = await query<TransactionRow>(
+    `SELECT * FROM transactions
+     WHERE status = $1 AND created_at >= $2
+     ORDER BY created_at DESC`,
+    ['ACTIVE', sinceIso],
+  );
+  return rows.map(toDomain);
 }
-
-type TransactionRow = {
-  id: string;
-  txid: string;
-  internal_id: string;
-  tax_id?: string | null;
-  status: TransactionStatus;
-  callback_url?: string | null;
-  amount: string;
-  pix_copy_paste?: string | null;
-  created_at: string;
-  updated_at: string;
-};
-
-function mapRowToStoredTransaction(row: TransactionRow): StoredTransaction {
-  return {
-    id: String(row.id),
-    txid: String(row.txid),
-    internalId: String(row.internal_id),
-    taxId: row.tax_id ? String(row.tax_id) : undefined,
-    status: row.status as TransactionStatus,
-    callbackUrl: row.callback_url ? String(row.callback_url) : undefined,
-    amount: String(row.amount),
-    pixCopyPaste: row.pix_copy_paste ? String(row.pix_copy_paste) : undefined,
-    createdAt: String(row.created_at),
-    updatedAt: String(row.updated_at),
-  };
-}
-
-

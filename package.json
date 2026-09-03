@@ -13,7 +13,6 @@
     "migrate": "node -e \"require('./dist/shared/migrations').runMigrations(process.env.DATABASE_URL).then(a=>console.log(a))\""
   },
   "dependencies": {
-    "@supabase/supabase-js": "^2.56.0",
     "axios": "^1.4.0",
     "dotenv": "^16.0.3",
     "express": "^4.18.2",
