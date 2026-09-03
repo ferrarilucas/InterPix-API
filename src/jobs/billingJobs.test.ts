@@ -1,0 +1,298 @@
+import { randomUUID } from 'crypto';
+import { afterAll, afterEach, describe, expect, it, vi } from 'vitest';
+import { closePool } from '../shared/db';
+import * as inter from '../providers/inter/pixAutomatico';
+import { createSubscription as createFixture } from '../test/factories';
+import {
+  countCycleAttempts,
+  findCycleById,
+  insertCycle,
+  listCyclesBySubscription,
+  updateCycleStatus,
+} from '../repositories/cycles';
+import { findSubscriptionById, updateSubscriptionStatus } from '../repositories/subscriptions';
+import {
+  expireOverdue,
+  generateCycles,
+  reconcile,
+  retryFailed,
+  sendCharges,
+} from './billingJobs';
+import { withAdvisoryLock } from './lock';
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
+
+afterAll(async () => {
+  await closePool();
+});
+
+describe('generateCycles', () => {
+  it('cria o primeiro ciclo de uma assinatura ativa sem ciclos', async () => {
+    const subscription = await createFixture({ nextDueDate: '2026-11-20' });
+    await updateSubscriptionStatus(subscription.id, 'ACTIVE', { interRecId: randomUUID() });
+
+    await generateCycles('2026-11-20');
+
+    const cycles = await listCyclesBySubscription(subscription.id);
+    expect(cycles).toHaveLength(1);
+    expect(cycles[0].seq).toBe(1);
+    expect(cycles[0].dueDate).toBe('2026-11-20');
+  });
+
+  it('nao duplica ciclo quando roda duas vezes no mesmo dia', async () => {
+    const subscription = await createFixture({ nextDueDate: '2026-11-21' });
+    await updateSubscriptionStatus(subscription.id, 'ACTIVE', { interRecId: randomUUID() });
+
+    await generateCycles('2026-11-21');
+    await generateCycles('2026-11-21');
+
+    const cycles = await listCyclesBySubscription(subscription.id);
+    expect(cycles).toHaveLength(1);
+  });
+
+  it('ancora a data de vencimento no primeiro ciclo em vez de encadear a partir do anterior', async () => {
+    const subscription = await createFixture({ nextDueDate: '2026-01-31' });
+    await updateSubscriptionStatus(subscription.id, 'ACTIVE', { interRecId: randomUUID() });
+
+    await generateCycles('2026-01-31');
+    const [firstCycle] = await listCyclesBySubscription(subscription.id);
+    await updateCycleStatus(firstCycle.id, 'SENT', { interTxid: randomUUID() });
+    await updateCycleStatus(firstCycle.id, 'PAID', { paidAt: new Date().toISOString() });
+
+    await generateCycles('2026-02-28');
+
+    const secondCycle = (await listCyclesBySubscription(subscription.id))[1];
+    expect(secondCycle.dueDate).toBe('2026-02-28');
+
+    await updateCycleStatus(secondCycle.id, 'SENT', { interTxid: randomUUID() });
+    await updateCycleStatus(secondCycle.id, 'PAID', { paidAt: new Date().toISOString() });
+
+    await generateCycles('2026-03-31');
+
+    const thirdCycle = (await listCyclesBySubscription(subscription.id))[2];
+    expect(thirdCycle.dueDate).toBe('2026-03-31');
+  });
+});
+
+describe('sendCharges', () => {
+  it('envia cobr apenas dentro da janela e registra a primeira tentativa', async () => {
+    const txid = randomUUID();
+    const createCharge = vi
+      .spyOn(inter, 'createCharge')
+      .mockResolvedValue({ txid, status: 'CREATED', rawStatus: 'CRIADA' });
+
+    const subscription = await createFixture({ nextDueDate: '2026-11-25' });
+    await updateSubscriptionStatus(subscription.id, 'ACTIVE', { interRecId: randomUUID() });
+    const cycle = await insertCycle({
+      subscriptionId: subscription.id,
+      seq: 1,
+      dueDate: '2026-11-25',
+      amount: '29.90',
+    });
+
+    await sendCharges('2026-11-22');
+
+    expect(createCharge).toHaveBeenCalled();
+    const updated = await findCycleById(cycle.id);
+    expect(updated?.status).toBe('SENT');
+    expect(updated?.interTxid).toBeTruthy();
+    expect(await countCycleAttempts(cycle.id)).toBe(1);
+  });
+
+  it('nao envia fora da janela de 10 a 2 dias', async () => {
+    const createCharge = vi.spyOn(inter, 'createCharge');
+
+    const subscription = await createFixture({ nextDueDate: '2026-11-26' });
+    await updateSubscriptionStatus(subscription.id, 'ACTIVE', { interRecId: randomUUID() });
+    await insertCycle({
+      subscriptionId: subscription.id,
+      seq: 1,
+      dueDate: '2026-11-26',
+      amount: '29.90',
+    });
+
+    await sendCharges('2026-11-25');
+
+    expect(createCharge).not.toHaveBeenCalled();
+  });
+});
+
+describe('retryFailed', () => {
+  it('reenvia com o mesmo txid e incrementa a tentativa', async () => {
+    const txid = randomUUID();
+    const createCharge = vi
+      .spyOn(inter, 'createCharge')
+      .mockResolvedValue({ txid, status: 'CREATED', rawStatus: 'CRIADA' });
+
+    const subscription = await createFixture({ nextDueDate: '2026-11-27' });
+    await updateSubscriptionStatus(subscription.id, 'ACTIVE', { interRecId: randomUUID() });
+    const cycle = await insertCycle({
+      subscriptionId: subscription.id,
+      seq: 1,
+      dueDate: '2026-11-27',
+      amount: '29.90',
+    });
+    await updateCycleStatus(cycle.id, 'SENT', { interTxid: txid });
+    await updateCycleStatus(cycle.id, 'FAILED');
+
+    await retryFailed('2026-11-28');
+
+    expect(createCharge.mock.calls[0][0].txid).toBe(txid);
+    const updated = await findCycleById(cycle.id);
+    expect(updated?.status).toBe('RETRYING');
+    expect(await countCycleAttempts(cycle.id)).toBe(1);
+  });
+
+  it('nao reenvia depois dos 7 dias de janela', async () => {
+    const createCharge = vi.spyOn(inter, 'createCharge');
+
+    const subscription = await createFixture({ nextDueDate: '2026-11-01' });
+    await updateSubscriptionStatus(subscription.id, 'ACTIVE', { interRecId: randomUUID() });
+    const cycle = await insertCycle({
+      subscriptionId: subscription.id,
+      seq: 1,
+      dueDate: '2026-11-01',
+      amount: '29.90',
+    });
+    await updateCycleStatus(cycle.id, 'SENT', { interTxid: randomUUID() });
+    await updateCycleStatus(cycle.id, 'FAILED');
+
+    await retryFailed('2026-11-20');
+
+    expect(createCharge).not.toHaveBeenCalled();
+  });
+});
+
+describe('expireOverdue', () => {
+  it('abandona o ciclo e suspende a assinatura apos a janela', async () => {
+    const subscription = await createFixture({ nextDueDate: '2026-11-02' });
+    await updateSubscriptionStatus(subscription.id, 'ACTIVE', { interRecId: randomUUID() });
+    const cycle = await insertCycle({
+      subscriptionId: subscription.id,
+      seq: 1,
+      dueDate: '2026-11-02',
+      amount: '29.90',
+    });
+    await updateCycleStatus(cycle.id, 'SENT', { interTxid: randomUUID() });
+    await updateCycleStatus(cycle.id, 'FAILED');
+    await updateSubscriptionStatus(subscription.id, 'PAST_DUE');
+
+    await expireOverdue('2026-11-11');
+
+    expect((await findCycleById(cycle.id))?.status).toBe('ABANDONED');
+    expect((await findSubscriptionById(subscription.id))?.status).toBe('SUSPENDED');
+  });
+});
+
+describe('reconcile', () => {
+  it('marca o ciclo como pago quando o provider confirma PAID', async () => {
+    const txid = randomUUID();
+    vi.spyOn(inter, 'getChargeByTxid').mockResolvedValue({
+      txid,
+      status: 'PAID',
+      rawStatus: 'CONCLUIDA',
+      endToEndId: 'E1',
+      paidAt: '2026-11-05T10:00:00Z',
+    });
+
+    const subscription = await createFixture({ nextDueDate: '2026-11-05' });
+    await updateSubscriptionStatus(subscription.id, 'ACTIVE', { interRecId: randomUUID() });
+    const cycle = await insertCycle({
+      subscriptionId: subscription.id,
+      seq: 1,
+      dueDate: '2026-11-05',
+      amount: '29.90',
+    });
+    await updateCycleStatus(cycle.id, 'SENT', { interTxid: txid });
+
+    await reconcile();
+
+    expect((await findCycleById(cycle.id))?.status).toBe('PAID');
+  });
+
+  it('nao marca como pago quando o provider devolve UNKNOWN', async () => {
+    const txid = randomUUID();
+    vi.spyOn(inter, 'getChargeByTxid').mockResolvedValue({
+      txid,
+      status: 'UNKNOWN',
+      rawStatus: 'ALGO_NOVO',
+    });
+
+    const subscription = await createFixture({ nextDueDate: '2026-11-06' });
+    await updateSubscriptionStatus(subscription.id, 'ACTIVE', { interRecId: randomUUID() });
+    const cycle = await insertCycle({
+      subscriptionId: subscription.id,
+      seq: 1,
+      dueDate: '2026-11-06',
+      amount: '29.90',
+    });
+    await updateCycleStatus(cycle.id, 'SENT', { interTxid: txid });
+
+    await reconcile();
+
+    expect((await findCycleById(cycle.id))?.status).toBe('SENT');
+  });
+
+  it('recupera assinatura presa em PENDING_AUTH quando o Inter ja aprovou', async () => {
+    const recId = randomUUID();
+    vi.spyOn(inter, 'getRecurrence').mockResolvedValue({
+      recId,
+      status: 'APPROVED',
+      rawStatus: 'APROVADA',
+    });
+
+    const subscription = await createFixture({ nextDueDate: '2026-11-07' });
+    await updateSubscriptionStatus(subscription.id, 'PENDING_AUTH', { interRecId: recId });
+
+    await reconcile();
+
+    expect((await findSubscriptionById(subscription.id))?.status).toBe('ACTIVE');
+  });
+
+  it('recupera assinatura presa em PENDING_AUTH quando o Inter negou', async () => {
+    const recId = randomUUID();
+    vi.spyOn(inter, 'getRecurrence').mockResolvedValue({
+      recId,
+      status: 'DENIED',
+      rawStatus: 'REJEITADA',
+    });
+
+    const subscription = await createFixture({ nextDueDate: '2026-11-08' });
+    await updateSubscriptionStatus(subscription.id, 'PENDING_AUTH', { interRecId: recId });
+
+    await reconcile();
+
+    expect((await findSubscriptionById(subscription.id))?.status).toBe('AUTH_DENIED');
+  });
+});
+
+describe('withAdvisoryLock', () => {
+  it('impede execucao concorrente da mesma chave', async () => {
+    let running = 0;
+    let maxConcurrent = 0;
+
+    const task = async () => {
+      running += 1;
+      maxConcurrent = Math.max(maxConcurrent, running);
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      running -= 1;
+      return true;
+    };
+
+    await Promise.all([withAdvisoryLock(9001, task), withAdvisoryLock(9001, task)]);
+
+    expect(maxConcurrent).toBe(1);
+  });
+
+  it('devolve null quando outra replica ja tem o lock', async () => {
+    const holder = withAdvisoryLock(9002, () => new Promise((resolve) => setTimeout(resolve, 100)));
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    const result = await withAdvisoryLock(9002, async () => 'nunca deveria rodar');
+
+    expect(result).toBeNull();
+    await holder;
+  });
+});

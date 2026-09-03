@@ -137,3 +137,12 @@ export async function listActiveSubscriptionsDueFor(date: string): Promise<Subsc
   );
   return rows.map(toDomain);
 }
+
+export async function listPendingAuthWithRecId(): Promise<Subscription[]> {
+  const rows = await query<SubscriptionRow>(
+    `SELECT * FROM subscriptions
+     WHERE status = 'PENDING_AUTH' AND inter_rec_id IS NOT NULL
+     ORDER BY created_at`,
+  );
+  return rows.map(toDomain);
+}
