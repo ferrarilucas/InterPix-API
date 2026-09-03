@@ -122,7 +122,7 @@ curl -X POST http://localhost:3000/subscriptions \
 Regras de validação (rejeitadas com `400 BAD_REQUEST`):
 - `amount`: string no formato `"99.90"` (duas casas decimais).
 - `intervalMonths`: inteiro entre 1 e 12.
-- `firstDueDate`: `YYYY-MM-DD`, não pode estar no passado.
+- `firstDueDate`: `YYYY-MM-DD`, precisa de no mínimo `CHARGE_LEAD_DAYS` dias de antecedência (padrão 3, nunca menos que os 2 dias mínimos do Bacen). Uma data mais próxima que isso geraria um ciclo que nunca poderia ser enviado, porque a instrução de pagamento só é aceita entre 10 e 2 dias antes do vencimento.
 - `debtor.taxId`: 11 dígitos (CPF) ou 14 dígitos (CNPJ), só números.
 
 Resposta (`201`):

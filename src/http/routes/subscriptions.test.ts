@@ -6,6 +6,12 @@ import { config } from '../../shared/config';
 import { closePool } from '../../shared/db';
 import { AppError } from '../../shared/errors';
 import * as inter from '../../providers/inter/pixAutomatico';
+import {
+  addDays,
+  businessToday,
+  MIN_LEAD_DAYS,
+  minimumFirstDueDate,
+} from '../../domain/schedule';
 
 const app = createApp();
 const auth = { Authorization: `Bearer ${config.apiToken}` };
@@ -69,6 +75,44 @@ describe('POST /subscriptions', () => {
       .send({ ...validBody, firstDueDate: '2020-01-01' });
 
     expect(response.status).toBe(400);
+  });
+
+  it('recusa firstDueDate dentro da janela impossivel de enviar', async () => {
+    const tooSoon = addDays(businessToday(), MIN_LEAD_DAYS - 1);
+
+    const response = await request(app)
+      .post('/subscriptions')
+      .set(auth)
+      .send({ ...validBody, firstDueDate: tooSoon });
+
+    expect(response.status).toBe(400);
+    expect(JSON.stringify(response.body)).toContain('antecedencia');
+  });
+
+  it('aceita firstDueDate exatamente no lead minimo configurado', async () => {
+    const recId = `rec-lead-${randomUUID()}`;
+    vi.spyOn(inter, 'createRecurrence').mockResolvedValue({
+      recId,
+      status: 'CREATED',
+      rawStatus: 'CRIADA',
+    });
+    vi.spyOn(inter, 'requestAuthorization').mockResolvedValue({
+      recId,
+      status: 'PENDING_AUTH',
+      rawStatus: 'PENDENTE',
+      solicrecId: `sol-lead-${recId}`,
+    });
+
+    const response = await request(app)
+      .post('/subscriptions')
+      .set(auth)
+      .send({
+        ...validBody,
+        externalUserId: `usr_lead_${recId}`,
+        firstDueDate: minimumFirstDueDate(businessToday(), config.chargeLeadDays),
+      });
+
+    expect(response.status).toBe(201);
   });
 
   it('devolve 502 sem vazar detalhe quando o Inter falha', async () => {

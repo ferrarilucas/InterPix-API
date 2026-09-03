@@ -17,9 +17,16 @@ import {
   listCyclesByStatus,
   listCyclesBySubscription,
   updateCycleStatus,
+  updateCycleStatusIf,
 } from '../repositories/cycles';
 import { insertEvent } from '../repositories/events';
-import { addMonths, nextRetryDate, shouldSendCharge } from '../domain/schedule';
+import { withTransaction } from '../shared/db';
+import {
+  addMonths,
+  isSendWindowMissed,
+  nextRetryDate,
+  shouldSendCharge,
+} from '../domain/schedule';
 import { assertCycleTransition, assertSubscriptionTransition } from '../domain/stateMachine';
 import { enqueueDelivery } from '../domain/webhookDispatcher';
 
@@ -76,6 +83,71 @@ export async function generateCycles(today: string): Promise<number> {
   }
 
   return created;
+}
+
+export async function cancelUnsendableCycles(today: string): Promise<number> {
+  const cycles = await listCyclesByStatus(['SCHEDULED']);
+  let canceled = 0;
+
+  for (const cycle of cycles) {
+    if (!isSendWindowMissed(cycle.dueDate, today)) {
+      continue;
+    }
+
+    try {
+      assertCycleTransition(cycle.status, 'CANCELED');
+
+      const applied = await withTransaction(async (client) => {
+        const updated = await updateCycleStatusIf(cycle.id, 'SCHEDULED', 'CANCELED', {}, client);
+
+        if (!updated) {
+          return false;
+        }
+
+        const event = await insertEvent(
+          {
+            subscriptionId: cycle.subscriptionId,
+            cycleId: cycle.id,
+            type: 'cycle.failed',
+            payload: {
+              reason: 'JANELA_DE_ENVIO_EXPIRADA',
+              dueDate: cycle.dueDate,
+              seq: cycle.seq,
+            },
+          },
+          client,
+        );
+        await enqueueDelivery(
+          event.id,
+          'cycle.failed',
+          {
+            subscriptionId: cycle.subscriptionId,
+            cycleSeq: cycle.seq,
+            reason: 'JANELA_DE_ENVIO_EXPIRADA',
+          },
+          client,
+        );
+
+        return true;
+      });
+
+      if (applied) {
+        canceled += 1;
+        logger.error('ciclo cancelado sem cobranca por perda da janela de envio', {
+          cycleId: cycle.id,
+          subscriptionId: cycle.subscriptionId,
+          dueDate: cycle.dueDate,
+        });
+      }
+    } catch (error) {
+      logger.error('falha ao cancelar ciclo fora da janela', {
+        cycleId: cycle.id,
+        message: (error as Error).message,
+      });
+    }
+  }
+
+  return canceled;
 }
 
 export async function sendCharges(today: string): Promise<number> {

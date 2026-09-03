@@ -3,7 +3,14 @@ import { logger } from '../shared/logger';
 import { businessToday } from '../domain/schedule';
 import { deliverPending } from '../domain/webhookDispatcher';
 import { withAdvisoryLock } from './lock';
-import { expireOverdue, generateCycles, reconcile, retryFailed, sendCharges } from './billingJobs';
+import {
+  cancelUnsendableCycles,
+  expireOverdue,
+  generateCycles,
+  reconcile,
+  retryFailed,
+  sendCharges,
+} from './billingJobs';
 
 const LOCK_KEYS = {
   daily: 1001,
@@ -13,11 +20,12 @@ const LOCK_KEYS = {
 
 async function runDaily(): Promise<void> {
   const date = businessToday();
+  const unsendable = await cancelUnsendableCycles(date);
   const generated = await generateCycles(date);
   const sent = await sendCharges(date);
   const retried = await retryFailed(date);
   const expired = await expireOverdue(date);
-  logger.info('jobs diarios concluidos', { generated, sent, retried, expired });
+  logger.info('jobs diarios concluidos', { unsendable, generated, sent, retried, expired });
 }
 
 export function startScheduler(): void {

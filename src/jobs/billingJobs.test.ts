@@ -2,7 +2,10 @@ import { randomUUID } from 'crypto';
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { closePool } from '../shared/db';
 import * as inter from '../providers/inter/pixAutomatico';
-import { createSubscription as createFixture } from '../test/factories';
+import {
+  createSubscription as createFixture,
+  listDeliveredEventTypes,
+} from '../test/factories';
 import {
   countCycleAttempts,
   findCycleById,
@@ -16,6 +19,7 @@ import * as subscriptionsRepo from '../repositories/subscriptions';
 import * as cyclesRepo from '../repositories/cycles';
 import * as webhookDispatcher from '../domain/webhookDispatcher';
 import {
+  cancelUnsendableCycles,
   expireOverdue,
   generateCycles,
   reconcile,
@@ -141,20 +145,94 @@ describe('sendCharges', () => {
   });
 
   it('nao envia fora da janela de 10 a 2 dias', async () => {
-    const createCharge = vi.spyOn(inter, 'createCharge');
-
     const subscription = await createFixture({ nextDueDate: '2026-11-26' });
     await updateSubscriptionStatus(subscription.id, 'ACTIVE', { interRecId: randomUUID() });
-    await insertCycle({
+    const tooLate = await insertCycle({
       subscriptionId: subscription.id,
       seq: 1,
       dueDate: '2026-11-26',
       amount: '29.90',
     });
+    const tooEarly = await insertCycle({
+      subscriptionId: subscription.id,
+      seq: 2,
+      dueDate: '2026-12-20',
+      amount: '29.90',
+    });
 
     await sendCharges('2026-11-25');
 
-    expect(createCharge).not.toHaveBeenCalled();
+    expect((await findCycleById(tooLate.id))?.status).toBe('SCHEDULED');
+    expect((await findCycleById(tooLate.id))?.interTxid).toBeNull();
+    expect((await findCycleById(tooEarly.id))?.status).toBe('SCHEDULED');
+  });
+
+  it('envia no limite de 10 dias de antecedencia', async () => {
+    const subscription = await createFixture({ nextDueDate: '2026-12-11' });
+    await updateSubscriptionStatus(subscription.id, 'ACTIVE', { interRecId: randomUUID() });
+    const cycle = await insertCycle({
+      subscriptionId: subscription.id,
+      seq: 1,
+      dueDate: '2026-12-11',
+      amount: '29.90',
+    });
+
+    await sendCharges('2026-12-01');
+
+    expect((await findCycleById(cycle.id))?.status).toBe('SENT');
+  });
+});
+
+describe('cancelUnsendableCycles', () => {
+  it('cancela o ciclo SCHEDULED que perdeu a janela e avisa o SaaS', async () => {
+    const subscription = await createFixture({ nextDueDate: '2026-12-01' });
+    await updateSubscriptionStatus(subscription.id, 'ACTIVE', { interRecId: randomUUID() });
+    const cycle = await insertCycle({
+      subscriptionId: subscription.id,
+      seq: 1,
+      dueDate: '2026-12-01',
+      amount: '29.90',
+    });
+
+    const canceled = await cancelUnsendableCycles('2026-11-30');
+
+    expect(canceled).toBeGreaterThanOrEqual(1);
+    expect((await findCycleById(cycle.id))?.status).toBe('CANCELED');
+    expect(await listDeliveredEventTypes(subscription.id)).toContain('cycle.failed');
+  });
+
+  it('nao toca em ciclo que ainda pode ser enviado', async () => {
+    const subscription = await createFixture({ nextDueDate: '2026-12-02' });
+    await updateSubscriptionStatus(subscription.id, 'ACTIVE', { interRecId: randomUUID() });
+    const cycle = await insertCycle({
+      subscriptionId: subscription.id,
+      seq: 1,
+      dueDate: '2026-12-02',
+      amount: '29.90',
+    });
+
+    await cancelUnsendableCycles('2026-11-29');
+
+    expect((await findCycleById(cycle.id))?.status).toBe('SCHEDULED');
+  });
+
+  it('desbloqueia a geracao do proximo ciclo da assinatura', async () => {
+    const subscription = await createFixture({ nextDueDate: '2026-12-03' });
+    await updateSubscriptionStatus(subscription.id, 'ACTIVE', { interRecId: randomUUID() });
+    await insertCycle({
+      subscriptionId: subscription.id,
+      seq: 1,
+      dueDate: '2026-12-03',
+      amount: '29.90',
+    });
+
+    await cancelUnsendableCycles('2026-12-02');
+    await generateCycles('2026-12-02');
+
+    const cycles = await listCyclesBySubscription(subscription.id);
+    expect(cycles).toHaveLength(2);
+    expect(cycles[1].seq).toBe(2);
+    expect(cycles[1].dueDate).toBe('2027-01-03');
   });
 });
 

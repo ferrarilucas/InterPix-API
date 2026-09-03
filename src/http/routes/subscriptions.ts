@@ -6,7 +6,10 @@ import {
   createSubscription,
   getSubscriptionDetail,
 } from '../../domain/subscriptionService';
-import { businessToday } from '../../domain/schedule';
+import { config } from '../../shared/config';
+import { businessToday, MIN_LEAD_DAYS, minimumFirstDueDate } from '../../domain/schedule';
+
+const REQUIRED_LEAD_DAYS = Math.max(config.chargeLeadDays, MIN_LEAD_DAYS);
 
 const createSchema = z.object({
   externalUserId: z.string().min(1).max(128),
@@ -16,8 +19,8 @@ const createSchema = z.object({
   firstDueDate: z
     .string()
     .regex(/^\d{4}-\d{2}-\d{2}$/)
-    .refine((value) => value >= businessToday(), {
-      message: 'firstDueDate nao pode estar no passado',
+    .refine((value) => value >= minimumFirstDueDate(businessToday(), config.chargeLeadDays), {
+      message: `firstDueDate precisa de no minimo ${REQUIRED_LEAD_DAYS} dias de antecedencia`,
     }),
   debtor: z.object({
     taxId: z.string().regex(/^\d{11}$|^\d{14}$/),
