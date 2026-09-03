@@ -1,5 +1,5 @@
 import { randomUUID } from 'crypto';
-import { afterAll, afterEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { closePool } from '../shared/db';
 import * as inter from '../providers/inter/pixAutomatico';
 import { createSubscription as createFixture } from '../test/factories';
@@ -23,6 +23,24 @@ import {
   sendCharges,
 } from './billingJobs';
 import { withAdvisoryLock } from './lock';
+
+beforeEach(() => {
+  vi.spyOn(inter, 'getRecurrence').mockResolvedValue({
+    recId: 'leftover-inert',
+    status: 'UNKNOWN',
+    rawStatus: 'INERTE',
+  });
+  vi.spyOn(inter, 'getChargeByTxid').mockResolvedValue({
+    txid: 'leftover-inert',
+    status: 'UNKNOWN',
+    rawStatus: 'INERTE',
+  });
+  vi.spyOn(inter, 'createCharge').mockResolvedValue({
+    txid: 'leftover-inert',
+    status: 'CREATED',
+    rawStatus: 'CRIADA',
+  });
+});
 
 afterEach(() => {
   vi.restoreAllMocks();
