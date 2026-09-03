@@ -30,12 +30,12 @@ src/
 │   └── routes/                 # subscriptions, interWebhook
 ├── domain/                    # Máquina de estados, regras de janela/dunning, dispatcher de webhook
 ├── jobs/                      # scheduler (cron) + billingJobs (geração/envio/retentativa/reconciliação)
-├── providers/inter/            # Integração com a API do Banco Inter (rec, solicrec, cobr, cobv)
+├── providers/inter/            # Integração com a API do Banco Inter (rec, solicrec, cobr)
 ├── repositories/               # Acesso a Postgres (subscriptions, cycles, events, webhookDeliveries, ...)
 └── shared/                    # config validada (zod), logger com máscara de CPF/CNPJ, db (pg), migrations
 ```
 
-`src/repositories/transactions.ts`, `src/pix.ts` e `src/providers/inter/cobv.ts` são código legado de cobrança avulsa (`/pix/v2/cob` e `/pix/v2/cobv`). Não estão mais expostos por nenhuma rota HTTP: o `server.ts` atual só sobe o app de assinaturas descrito abaixo. Esses módulos foram mantidos e a camada de persistência foi migrada para Postgres puro (antes usava Supabase), mas não há rota ativa que os utilize.
+O código legado de cobrança avulsa (`/charge` e `/recurring-charge`, endpoints que existiam em versões anteriores desta API) e sua dependência do Supabase foram removidos: não há mais rotas, providers ou repositório para isso. O `server.ts` atual só sobe o app de assinaturas descrito abaixo.
 
 ## Configuração
 
