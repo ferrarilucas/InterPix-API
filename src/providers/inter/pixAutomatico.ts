@@ -128,7 +128,6 @@ function toRecurrence(data: Record<string, unknown>): RecurrenceResponse {
     recId: String(data.idRec),
     status: mapRecurrenceStatus(rawStatus),
     rawStatus,
-    solicrecId: data.idSolicRec ? String(data.idSolicRec) : undefined,
     pixCopyPaste: dadosQR?.pixCopiaECola ? String(dadosQR.pixCopiaECola) : undefined,
     url: loc?.location ? String(loc.location) : undefined,
   };

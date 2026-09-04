@@ -19,7 +19,6 @@ export interface RecurrenceResponse {
   recId: string;
   status: RecurrenceStatus;
   rawStatus: string;
-  solicrecId?: string;
   pixCopyPaste?: string;
   url?: string;
 }
