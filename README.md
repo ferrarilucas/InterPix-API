@@ -245,7 +245,13 @@ Eventos emitidos:
 | `subscription.past_due` | O ciclo atual falhou e a assinatura entrou em atraso, mas ainda dentro da janela de retentativa | Opcional: avisar o usuário que há uma cobrança pendente |
 | `subscription.suspended` | A janela de dunning esgotou sem pagamento | Suspender o acesso ao plano |
 
-Criação (`subscription.created`) e cancelamento (`subscription.canceled`) **não** geram webhook de saída — o SaaS já sabe desses eventos porque foi ele quem chamou `POST /subscriptions` e `POST /subscriptions/:id/cancel`, respectivamente.
+| `subscription.canceled` | A assinatura foi cancelada via `POST /subscriptions/:id/cancel` | Encerrar o acesso ao fim do período já pago. `data.pendingCycleSeq` indica um ciclo que ainda pode ser debitado |
+
+Criação (`subscription.created`) e envio de cobrança (`cycle.sent`) são registrados na tabela `events` mas **não** geram webhook de saída.
+
+Atenção: `cycle.paid` e `cycle.failed` carregam apenas `subscriptionId`, **sem** `externalUserId`. Como `cycle.paid` é o evento que libera o plano, o SaaS precisa guardar o mapeamento `subscriptionId → userId` no momento em que chama `POST /subscriptions`.
+
+Para o contrato completo — payloads exatos de cada evento, tipos TypeScript e checklist de implementação — ver [docs/INTEGRACAO-SAAS.md](docs/INTEGRACAO-SAAS.md).
 
 Retentativa (ver [regra 5](#regras-de-integração)): agendamento em minutos `[1, 5, 15, 60, 360, 1440]` a partir da primeira falha (1 min, 5 min, 15 min, 1h, 6h, 24h). Esgotadas as 6 tentativas, a entrega é marcada como definitivamente falha e abandonada — não há mais retentativa depois disso.
 
