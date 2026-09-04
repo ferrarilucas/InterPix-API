@@ -11,6 +11,11 @@ const schema = z.object({
   INTER_CERT_PATH: z.string().min(1),
   INTER_KEY_PATH: z.string().min(1),
   PIX_KEY: z.string().min(1),
+  INTER_RECEBEDOR_NOME: z.string().min(1),
+  INTER_RECEBEDOR_CNPJ: z.string().regex(/^\d{14}$/, 'deve ter exatamente 14 digitos'),
+  INTER_RECEBEDOR_AGENCIA: z.string().min(1),
+  INTER_RECEBEDOR_CONTA: z.string().min(1),
+  INTER_RECEBEDOR_TIPO_CONTA: z.string().min(1),
   CHARGE_LEAD_DAYS: z.coerce.number().int().min(2).max(10).default(3),
   DUNNING_WINDOW_DAYS: z.coerce.number().int().min(1).max(7).default(7),
   PORT: z.coerce.number().int().positive().default(3000),
@@ -26,6 +31,11 @@ export interface Config {
   interCertPath: string;
   interKeyPath: string;
   pixKey: string;
+  interRecebedorNome: string;
+  interRecebedorCnpj: string;
+  interRecebedorAgencia: string;
+  interRecebedorConta: string;
+  interRecebedorTipoConta: string;
   chargeLeadDays: number;
   dunningWindowDays: number;
   port: number;
@@ -53,6 +63,11 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
     interCertPath: value.INTER_CERT_PATH,
     interKeyPath: value.INTER_KEY_PATH,
     pixKey: value.PIX_KEY,
+    interRecebedorNome: value.INTER_RECEBEDOR_NOME,
+    interRecebedorCnpj: value.INTER_RECEBEDOR_CNPJ,
+    interRecebedorAgencia: value.INTER_RECEBEDOR_AGENCIA,
+    interRecebedorConta: value.INTER_RECEBEDOR_CONTA,
+    interRecebedorTipoConta: value.INTER_RECEBEDOR_TIPO_CONTA,
     chargeLeadDays: value.CHARGE_LEAD_DAYS,
     dunningWindowDays: value.DUNNING_WINDOW_DAYS,
     port: value.PORT,
