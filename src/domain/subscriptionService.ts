@@ -71,9 +71,9 @@ async function authorizeAtInter(
     });
     recId = recurrence.recId;
 
-    const authorization = await inter.requestAuthorization(recurrence.recId, {
-      payerRequest: input.planCode,
-    });
+    const authorization = recurrence.pixCopyPaste
+      ? recurrence
+      : await inter.getRecurrence(recurrence.recId);
 
     return { recurrence, authorization };
   } catch (error) {
@@ -99,7 +99,6 @@ export async function createSubscription(
 
   const updated = await updateSubscriptionStatus(subscription.id, 'PENDING_AUTH', {
     interRecId: recurrence.recId,
-    interSolicrecId: authorization.solicrecId,
   });
 
   await insertEvent({

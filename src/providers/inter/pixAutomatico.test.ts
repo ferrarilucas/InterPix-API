@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { api } from '../../shared/api';
+import { config } from '../../shared/config';
 import { AppError } from '../../shared/errors';
 import {
   cancelRecurrence,
@@ -68,6 +69,24 @@ describe('createRecurrence', () => {
     const body = post.mock.calls[0][1] as { vinculo: { devedor: Record<string, unknown> } };
     expect(body.vinculo.devedor.cnpj).toBe('12345678901234');
     expect(body.vinculo.devedor.cpf).toBeUndefined();
+  });
+
+  it('envia o planCode como vinculo.contrato', async () => {
+    const post = vi.spyOn(api, 'post').mockResolvedValue({
+      data: { idRec: 'rec-contrato', status: 'CRIADA' },
+    } as never);
+
+    await createRecurrence({
+      amount: '29.90',
+      intervalMonths: 1,
+      firstDueDate: '2026-09-20',
+      debtorTaxId: '12345678901',
+      debtorName: 'Fulano',
+      planCode: 'mensal_29_90',
+    });
+
+    const body = post.mock.calls[0][1] as { vinculo: { contrato: string } };
+    expect(body.vinculo.contrato).toBe('mensal_29_90');
   });
 
   it('mapeia a resposta do Inter para o formato interno', async () => {
@@ -228,6 +247,28 @@ describe('createCharge', () => {
     });
 
     expect(put.mock.calls[0][0]).toContain('txid-fixo');
+  });
+
+  it('inclui os dados bancarios do recebedor configurados no ambiente', async () => {
+    const put = vi.spyOn(api, 'put').mockResolvedValue({
+      data: { txid: 'txid-recebedor', status: 'CRIADA' },
+    } as never);
+
+    await createCharge({
+      recId: 'rec-1',
+      txid: 'txid-recebedor',
+      dueDate: '2026-09-20',
+      amount: '29.90',
+    });
+
+    const body = put.mock.calls[0][1] as { recebedor: Record<string, unknown> };
+    expect(body.recebedor).toEqual({
+      nome: config.interRecebedorNome,
+      cnpj: config.interRecebedorCnpj,
+      agencia: config.interRecebedorAgencia,
+      conta: config.interRecebedorConta,
+      tipoConta: config.interRecebedorTipoConta,
+    });
   });
 });
 

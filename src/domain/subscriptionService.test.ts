@@ -22,18 +22,16 @@ afterAll(async () => {
 describe('createSubscription', () => {
   it('cria a assinatura em PENDING_AUTH, grava o recId do Inter e registra o evento', async () => {
     const recId = `rec-svc-${runId}`;
-    const solicrecId = `sol-svc-${runId}`;
 
     vi.spyOn(inter, 'createRecurrence').mockResolvedValue({
       recId,
       status: 'CREATED',
       rawStatus: 'CRIADA',
     });
-    vi.spyOn(inter, 'requestAuthorization').mockResolvedValue({
+    vi.spyOn(inter, 'getRecurrence').mockResolvedValue({
       recId,
-      status: 'PENDING_AUTH',
-      rawStatus: 'PENDENTE',
-      solicrecId,
+      status: 'CREATED',
+      rawStatus: 'CRIADA',
       pixCopyPaste: '00020126ccc',
       url: 'https://inter/autorizacao/svc',
     });
@@ -49,7 +47,6 @@ describe('createSubscription', () => {
 
     expect(result.subscription.status).toBe('PENDING_AUTH');
     expect(result.subscription.interRecId).toBe(recId);
-    expect(result.subscription.interSolicrecId).toBe(solicrecId);
     expect(result.authorization.pixCopyPaste).toBe('00020126ccc');
     expect(result.authorization.url).toBe('https://inter/autorizacao/svc');
 
@@ -101,14 +98,14 @@ describe('createSubscription', () => {
     expect(events.some((event) => event.type === 'subscription.auth_denied')).toBe(true);
   });
 
-  it('guarda o recId quando a solicitacao de autorizacao falha depois da rec criada', async () => {
+  it('guarda o recId quando a busca da recorrencia falha depois de criada', async () => {
     const recId = `rec-svc-half-${runId}`;
     vi.spyOn(inter, 'createRecurrence').mockResolvedValue({
       recId,
       status: 'CREATED',
       rawStatus: 'CRIADA',
     });
-    vi.spyOn(inter, 'requestAuthorization').mockRejectedValue(AppError.upstream());
+    vi.spyOn(inter, 'getRecurrence').mockRejectedValue(AppError.upstream());
 
     const externalUserId = `usr_svc_half_${runId}`;
 
@@ -142,7 +139,7 @@ describe('getSubscriptionDetail', () => {
       status: 'CREATED',
       rawStatus: 'CRIADA',
     });
-    vi.spyOn(inter, 'requestAuthorization').mockResolvedValue({
+    vi.spyOn(inter, 'getRecurrence').mockResolvedValue({
       recId,
       status: 'PENDING_AUTH',
       rawStatus: 'PENDENTE',

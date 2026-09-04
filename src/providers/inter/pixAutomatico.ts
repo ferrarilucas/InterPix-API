@@ -1,5 +1,6 @@
 import axios, { AxiosError } from 'axios';
 import { api } from '../../shared/api';
+import { config } from '../../shared/config';
 import { AppError } from '../../shared/errors';
 import { logger } from '../../shared/logger';
 import {
@@ -108,6 +109,7 @@ function toRecurrenceBody(input: CreateRecurrenceInput): Record<string, unknown>
     vinculo: {
       devedor: devedorFrom(input),
       objeto: input.planCode,
+      contrato: input.planCode,
     },
     calendario: {
       dataInicial: input.firstDueDate,
@@ -132,12 +134,23 @@ function toRecurrence(data: Record<string, unknown>): RecurrenceResponse {
   };
 }
 
+function recebedorFromConfig(): Record<string, unknown> {
+  return {
+    nome: config.interRecebedorNome,
+    cnpj: config.interRecebedorCnpj,
+    agencia: config.interRecebedorAgencia,
+    conta: config.interRecebedorConta,
+    tipoConta: config.interRecebedorTipoConta,
+  };
+}
+
 function toChargeBody(input: CreateChargeInput): Record<string, unknown> {
   return {
     idRec: input.recId,
     calendario: { dataDeVencimento: input.dueDate },
     valor: { original: input.amount },
     ajusteDiaUtil: true,
+    recebedor: recebedorFromConfig(),
   };
 }
 
@@ -173,27 +186,6 @@ export async function createRecurrence(
     return toRecurrence(response.data);
   } catch (error) {
     fail('createRecurrence', error);
-  }
-}
-
-export async function requestAuthorization(
-  recId: string,
-  input: { payerRequest?: string } = {},
-): Promise<RecurrenceResponse> {
-  void input;
-  const dataExpiracaoSolicitacao = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
-  try {
-    const response = await api.post(
-      '/pix/v2/solicrec',
-      {
-        idRec: recId,
-        calendario: { dataExpiracaoSolicitacao },
-      },
-      { headers: { 'Content-Type': 'application/json' } },
-    );
-    return toRecurrence(response.data);
-  } catch (error) {
-    fail('requestAuthorization', error);
   }
 }
 

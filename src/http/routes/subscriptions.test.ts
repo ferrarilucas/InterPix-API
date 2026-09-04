@@ -42,11 +42,10 @@ describe('POST /subscriptions', () => {
       status: 'CREATED',
       rawStatus: 'CRIADA',
     });
-    vi.spyOn(inter, 'requestAuthorization').mockResolvedValue({
+    vi.spyOn(inter, 'getRecurrence').mockResolvedValue({
       recId: `rec-9-${runId}`,
       status: 'PENDING_AUTH',
       rawStatus: 'PENDENTE',
-      solicrecId: `sol-9-${runId}`,
       pixCopyPaste: '00020126aaa',
       url: 'https://inter/autorizacao/9',
     });
@@ -97,11 +96,10 @@ describe('POST /subscriptions', () => {
       status: 'CREATED',
       rawStatus: 'CRIADA',
     });
-    vi.spyOn(inter, 'requestAuthorization').mockResolvedValue({
+    vi.spyOn(inter, 'getRecurrence').mockResolvedValue({
       recId,
       status: 'PENDING_AUTH',
       rawStatus: 'PENDENTE',
-      solicrecId: `sol-lead-${recId}`,
     });
 
     const response = await request(app)
@@ -119,7 +117,10 @@ describe('POST /subscriptions', () => {
   it('leva um CNPJ de 14 digitos ate o corpo enviado ao Inter', async () => {
     const recId = `rec-cnpj-${randomUUID()}`;
     const post = vi.spyOn(api, 'post').mockResolvedValue({
-      data: { idRec: recId, status: 'CRIADA', idSolicRec: `sol-${recId}` },
+      data: { idRec: recId, status: 'CRIADA' },
+    } as never);
+    vi.spyOn(api, 'get').mockResolvedValue({
+      data: { idRec: recId, status: 'CRIADA' },
     } as never);
 
     const response = await request(app)
@@ -159,7 +160,7 @@ describe('GET /subscriptions/:id', () => {
       status: 'CREATED',
       rawStatus: 'CRIADA',
     });
-    vi.spyOn(inter, 'requestAuthorization').mockResolvedValue({
+    vi.spyOn(inter, 'getRecurrence').mockResolvedValue({
       recId: `rec-10-${runId}`,
       status: 'PENDING_AUTH',
       rawStatus: 'PENDENTE',
