@@ -11,6 +11,11 @@ const validEnv = {
   INTER_CERT_PATH: './cert.crt',
   INTER_KEY_PATH: './cert.key',
   PIX_KEY: 'chave@pix.com',
+  INTER_RECEBEDOR_NOME: 'Empresa de Teste Ltda',
+  INTER_RECEBEDOR_CNPJ: '12345678000199',
+  INTER_RECEBEDOR_AGENCIA: '0001',
+  INTER_RECEBEDOR_CONTA: '1234567',
+  INTER_RECEBEDOR_TIPO_CONTA: 'CORRENTE',
 };
 
 describe('loadConfig', () => {
@@ -62,5 +67,27 @@ describe('loadConfig', () => {
 
   it('lista todas as variaveis ausentes numa unica mensagem', () => {
     expect(() => loadConfig({})).toThrow(/DATABASE_URL[\s\S]*PIX_KEY/);
+  });
+
+  it('rejeita INTER_RECEBEDOR_CNPJ com tamanho diferente de 14 digitos', () => {
+    expect(() =>
+      loadConfig({ ...validEnv, INTER_RECEBEDOR_CNPJ: '123' }),
+    ).toThrow(/INTER_RECEBEDOR_CNPJ/);
+  });
+
+  it('rejeita INTER_RECEBEDOR_TIPO_CONTA fora do enum aceito pelo Inter', () => {
+    expect(() =>
+      loadConfig({ ...validEnv, INTER_RECEBEDOR_TIPO_CONTA: 'INVESTIMENTO' }),
+    ).toThrow(/INTER_RECEBEDOR_TIPO_CONTA/);
+  });
+
+  it('carrega os dados do recebedor configurados no ambiente', () => {
+    const config = loadConfig(validEnv);
+
+    expect(config.interRecebedorNome).toBe('Empresa de Teste Ltda');
+    expect(config.interRecebedorCnpj).toBe('12345678000199');
+    expect(config.interRecebedorAgencia).toBe('0001');
+    expect(config.interRecebedorConta).toBe('1234567');
+    expect(config.interRecebedorTipoConta).toBe('CORRENTE');
   });
 });

@@ -15,7 +15,7 @@ const schema = z.object({
   INTER_RECEBEDOR_CNPJ: z.string().regex(/^\d{14}$/, 'deve ter exatamente 14 digitos'),
   INTER_RECEBEDOR_AGENCIA: z.string().min(1),
   INTER_RECEBEDOR_CONTA: z.string().min(1),
-  INTER_RECEBEDOR_TIPO_CONTA: z.string().min(1),
+  INTER_RECEBEDOR_TIPO_CONTA: z.enum(['CORRENTE', 'POUPANCA', 'PAGAMENTO']),
   CHARGE_LEAD_DAYS: z.coerce.number().int().min(2).max(10).default(3),
   DUNNING_WINDOW_DAYS: z.coerce.number().int().min(1).max(7).default(7),
   PORT: z.coerce.number().int().positive().default(3000),
