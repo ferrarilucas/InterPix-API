@@ -30,7 +30,7 @@ src/
 │   └── routes/                 # subscriptions, interWebhook
 ├── domain/                    # Máquina de estados, regras de janela/dunning, dispatcher de webhook
 ├── jobs/                      # scheduler (cron) + billingJobs (geração/envio/retentativa/reconciliação)
-├── providers/inter/            # Integração com a API do Banco Inter (rec, solicrec, cobr)
+├── providers/inter/            # Integração com a API do Banco Inter (rec, cobr)
 ├── repositories/               # Acesso a Postgres (subscriptions, cycles, events, webhookDeliveries, ...)
 └── shared/                    # config validada (zod), logger com máscara de CPF/CNPJ, db (pg), migrations
 ```
@@ -52,6 +52,11 @@ Variáveis de ambiente obrigatórias (validadas por `src/shared/config.ts`; o pr
 | `INTER_CERT_PATH` | Caminho do certificado `.crt`/`.cer` usado no mTLS com o Inter |
 | `INTER_KEY_PATH` | Caminho da chave privada correspondente ao certificado |
 | `PIX_KEY` | Chave Pix usada para gerar as cobranças |
+| `INTER_RECEBEDOR_NOME` | Nome da conta recebedora registrada no Inter (obrigatório em toda cobrança) |
+| `INTER_RECEBEDOR_CNPJ` | CNPJ (14 dígitos) da conta recebedora registrada no Inter |
+| `INTER_RECEBEDOR_AGENCIA` | Agência da conta recebedora registrada no Inter |
+| `INTER_RECEBEDOR_CONTA` | Número da conta recebedora registrada no Inter |
+| `INTER_RECEBEDOR_TIPO_CONTA` | Tipo da conta recebedora no Inter (`CORRENTE`, `POUPANCA` ou `PAGAMENTO`) |
 | `CHARGE_LEAD_DAYS` | Dias de antecedência para envio da cobrança (padrão 3, entre 2 e 10) |
 | `DUNNING_WINDOW_DAYS` | Janela de retentativa após vencimento (padrão 7, entre 1 e 7) |
 | `PORT` | Porta HTTP (padrão 3000) |
@@ -103,7 +108,9 @@ curl http://localhost:3000/health
 
 ### `POST /subscriptions`
 
-Cria uma assinatura, registra a recorrência (`rec`) no Inter e solicita a autorização do pagador (`solicrec`).
+Cria uma assinatura e registra a recorrência (`rec`) no Inter. A autorização segue a Jornada 2 do Pix
+Automático: a API nunca coleta dados bancários do pagador (agência/conta/banco); em vez disso ela devolve
+um QR Code contendo os dados da recorrência, que o pagador le e autoriza no próprio app do banco dele.
 
 ```bash
 curl -X POST http://localhost:3000/subscriptions \
@@ -142,7 +149,10 @@ Resposta (`201`):
 }
 ```
 
-Use `authorization.pixCopyPaste`/`authorization.url` para o pagador autorizar a recorrência no app do banco dele. A assinatura fica em `PENDING_AUTH` até o Inter confirmar a autorização (ver [webhook de saída](#webhook-de-saída-api--saas)).
+`authorization.pixCopyPaste` e o Pix Copia-e-Cola do QR Code da recorrência: o SaaS deve exibi-lo como
+QR Code (ou deixar o cliente colar o texto no app do banco) para que o pagador autorize a recorrência.
+Nenhum dado bancário do pagador (agência, conta, banco) precisa ser coletado nesse fluxo. A assinatura
+fica em `PENDING_AUTH` até o Inter confirmar a autorização (ver [webhook de saída](#webhook-de-saída-api--saas)).
 
 ### `GET /subscriptions/:id`
 

@@ -16,8 +16,9 @@ eventos é append-only desde o início, porque histórico não gravado não se r
 
 1. O SaaS chama `POST /subscriptions` server-side, passando valor, dados do cliente e o id do
    usuário no banco dele (`external_user_id`).
-2. A API cria a recorrência no Inter e devolve o payload de autorização.
-3. O usuário autoriza a recorrência no app do banco dele.
+2. A API cria a recorrência no Inter (Jornada 2: nenhum dado bancário do pagador é coletado) e
+   devolve um QR Code (Pix Copia-e-Cola) contendo os dados da recorrência.
+3. O usuário le o QR Code no app do banco dele e autoriza a recorrência por lá.
 4. O Inter chama o webhook da API.
 5. A API confirma o evento consultando o Inter, atualiza o estado e notifica o webhook do SaaS.
 6. O SaaS libera o plano **no pagamento**, não na autorização.
@@ -29,7 +30,7 @@ webhook do Inter.
 
 | Decisão | Escolha | Motivo |
 |---|---|---|
-| Modelo de recorrência | Pix Automático (`rec`/`solicrec`/`cobr`) | Débito sem ação do cliente a cada ciclo |
+| Modelo de recorrência | Pix Automático, Jornada 2 (`rec`/`cobr`, QR Code) | Débito sem ação do cliente a cada ciclo, sem coletar dados bancários do pagador |
 | Dono da assinatura | Esta API | Concentra a máquina de estados num lugar só |
 | Banco | Postgres próprio, database `billing` na instância existente | Isolamento sem infra nova; sem credencial da API no banco do produto |
 | Cliente do banco | `pg` + migrations em SQL puro | Combina com o estilo do código atual; sem camada mágica sobre transação de cobrança |
