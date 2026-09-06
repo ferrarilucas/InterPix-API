@@ -2,6 +2,7 @@ import cron from 'node-cron';
 import { logger } from '../shared/logger';
 import { businessToday } from '../domain/schedule';
 import { deliverPending } from '../domain/webhookDispatcher';
+import { ensureWebhooksAndLog } from '../domain/webhookRegistration';
 import { withAdvisoryLock } from './lock';
 import {
   cancelUnsendableCycles,
@@ -17,6 +18,7 @@ const LOCK_KEYS = {
   daily: 1001,
   reconcile: 1002,
   deliveries: 1003,
+  webhooks: 1004,
 };
 
 async function runDaily(): Promise<void> {
@@ -47,6 +49,14 @@ export function startScheduler(): void {
   cron.schedule('0 * * * *', () => {
     withAdvisoryLock(LOCK_KEYS.reconcile, reconcile).catch((error) =>
       logger.error('falha na reconciliacao', { message: (error as Error).message }),
+    );
+  });
+
+  cron.schedule('30 * * * *', () => {
+    withAdvisoryLock(LOCK_KEYS.webhooks, ensureWebhooksAndLog).catch((error) =>
+      logger.error('falha ao verificar os webhooks do inter', {
+        message: (error as Error).message,
+      }),
     );
   });
 

@@ -14,7 +14,7 @@ const interWebhookSchema = z
 export function interWebhookRoutes(): Router {
   const router = Router();
 
-  router.post('/inter', (req: Request, res: Response) => {
+  const handle = (req: Request, res: Response): void => {
     res.status(200).json({ received: true });
 
     const parsed = interWebhookSchema.safeParse(req.body ?? {});
@@ -29,7 +29,11 @@ export function interWebhookRoutes(): Router {
         message: (error as Error).message,
       });
     });
-  });
+  };
+
+  router.post('/inter/rec', handle);
+  router.post('/inter/cobr', handle);
+  router.post('/inter', handle);
 
   return router;
 }

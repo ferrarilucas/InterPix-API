@@ -1,6 +1,7 @@
 import { createApp } from './http/app';
 import { startScheduler } from './jobs/scheduler';
 import { runMigrations } from './shared/migrations';
+import { ensureWebhooksAndLog } from './domain/webhookRegistration';
 import { config } from './shared/config';
 import { logger } from './shared/logger';
 
@@ -15,6 +16,12 @@ async function main(): Promise<void> {
 
   app.listen(config.port, () => {
     logger.info('servidor iniciado', { port: config.port });
+
+    ensureWebhooksAndLog().catch((error) => {
+      logger.error('falha ao verificar os webhooks do inter na subida', {
+        message: (error as Error).message,
+      });
+    });
   });
 
   startScheduler();

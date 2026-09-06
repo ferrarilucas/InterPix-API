@@ -26,6 +26,30 @@ afterAll(async () => {
   await closePool();
 });
 
+describe('caminhos de callback do Bacen', () => {
+  it('aceita POST em /webhooks/inter/rec', async () => {
+    const response = await request(app).post('/webhooks/inter/rec').send({ idRec: 'rec-inexistente' });
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual({ received: true });
+  });
+
+  it('aceita POST em /webhooks/inter/cobr', async () => {
+    const response = await request(app).post('/webhooks/inter/cobr').send({ txid: 'txid-inexistente' });
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual({ received: true });
+  });
+
+  it('mantem o caminho sem sufixo funcionando', async () => {
+    const response = await request(app).post('/webhooks/inter').send({ txid: 'txid-inexistente' });
+    expect(response.status).toBe(200);
+  });
+
+  it('nao exige bearer token nos caminhos com sufixo', async () => {
+    const response = await request(app).post('/webhooks/inter/rec').send({});
+    expect(response.status).not.toBe(401);
+  });
+});
+
 describe('POST /webhooks/inter', () => {
   it('nao exige o bearer token', async () => {
     const response = await request(app).post('/webhooks/inter').send({ txid: 'inexistente' });

@@ -11,6 +11,12 @@ const schema = z.object({
   INTER_CERT_PATH: z.string().min(1),
   INTER_KEY_PATH: z.string().min(1),
   PIX_KEY: z.string().min(1),
+  INTER_WEBHOOK_BASE_URL: z
+    .string()
+    .url()
+    .refine((value) => value.startsWith('https://'), {
+      message: 'o Inter so aceita webhook em https',
+    }),
   INTER_RECEBEDOR_NOME: z.string().min(1),
   INTER_RECEBEDOR_CNPJ: z.string().regex(/^\d{14}$/, 'deve ter exatamente 14 digitos'),
   INTER_RECEBEDOR_AGENCIA: z.string().min(1),
@@ -31,6 +37,7 @@ export interface Config {
   interCertPath: string;
   interKeyPath: string;
   pixKey: string;
+  interWebhookBaseUrl: string;
   interRecebedorNome: string;
   interRecebedorCnpj: string;
   interRecebedorAgencia: string;
@@ -63,6 +70,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
     interCertPath: value.INTER_CERT_PATH,
     interKeyPath: value.INTER_KEY_PATH,
     pixKey: value.PIX_KEY,
+    interWebhookBaseUrl: value.INTER_WEBHOOK_BASE_URL,
     interRecebedorNome: value.INTER_RECEBEDOR_NOME,
     interRecebedorCnpj: value.INTER_RECEBEDOR_CNPJ,
     interRecebedorAgencia: value.INTER_RECEBEDOR_AGENCIA,

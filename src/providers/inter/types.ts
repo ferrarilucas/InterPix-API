@@ -40,3 +40,5 @@ export interface ChargeResponse {
   paidAt?: string;
   failureReason?: string;
 }
+
+export type WebhookKind = 'rec' | 'cobr';

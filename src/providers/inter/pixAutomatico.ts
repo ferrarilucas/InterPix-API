@@ -10,6 +10,7 @@ import {
   CreateRecurrenceInput,
   RecurrenceResponse,
   RecurrenceStatus,
+  WebhookKind,
 } from './types';
 
 const RECURRENCE_STATUS_MAP: Record<string, RecurrenceStatus> = {
@@ -234,5 +235,30 @@ export async function getChargeByTxid(txid: string): Promise<ChargeResponse> {
     return toCharge(response.data);
   } catch (error) {
     fail('getChargeByTxid', error);
+  }
+}
+
+export async function getWebhook(kind: WebhookKind): Promise<string | null> {
+  try {
+    const response = await api.get(`/pix/v2/webhook${kind}`);
+    const url = response.data?.webhookUrl;
+    return typeof url === 'string' && url.length > 0 ? url : null;
+  } catch (error) {
+    if (axios.isAxiosError(error) && error.response?.status === 404) {
+      return null;
+    }
+    fail('getWebhook', error);
+  }
+}
+
+export async function putWebhook(kind: WebhookKind, webhookUrl: string): Promise<void> {
+  try {
+    await api.put(
+      `/pix/v2/webhook${kind}`,
+      { webhookUrl },
+      { headers: { 'Content-Type': 'application/json' } },
+    );
+  } catch (error) {
+    fail('putWebhook', error);
   }
 }

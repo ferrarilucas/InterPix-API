@@ -11,6 +11,7 @@ const validEnv = {
   INTER_CERT_PATH: './cert.crt',
   INTER_KEY_PATH: './cert.key',
   PIX_KEY: 'chave@pix.com',
+  INTER_WEBHOOK_BASE_URL: 'https://api.exemplo.com/webhooks/inter',
   INTER_RECEBEDOR_NOME: 'Empresa de Teste Ltda',
   INTER_RECEBEDOR_CNPJ: '12345678000199',
   INTER_RECEBEDOR_AGENCIA: '0001',
