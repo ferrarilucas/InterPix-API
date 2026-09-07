@@ -52,6 +52,7 @@ Variáveis de ambiente obrigatórias (validadas por `src/shared/config.ts`; o pr
 | `INTER_CERT_PATH` | Caminho do certificado `.crt`/`.cer` usado no mTLS com o Inter |
 | `INTER_KEY_PATH` | Caminho da chave privada correspondente ao certificado |
 | `PIX_KEY` | Chave Pix usada para gerar as cobranças |
+| `APP_BASE_URL` | URL pública desta API (`https://`, sem path). A partir dela é montada a URL de webhook cadastrada no Inter |
 | `INTER_RECEBEDOR_NOME` | Nome da conta recebedora registrada no Inter (obrigatório em toda cobrança) |
 | `INTER_RECEBEDOR_CNPJ` | CNPJ (14 dígitos) da conta recebedora registrada no Inter |
 | `INTER_RECEBEDOR_AGENCIA` | Agência da conta recebedora registrada no Inter |
@@ -217,6 +218,12 @@ Ver [regra 2](#regras-de-integração) sobre o comportamento em retry.
 Sem autenticação por `Authorization` (ver [lacunas conhecidas](#lacunas-conhecidas)). É o endpoint de entrada de notificações do Banco Inter. Responde `200 { "received": true }` imediatamente e processa o evento de forma assíncrona, reconsultando sempre o status real no Inter antes de mudar qualquer coisa — o corpo do webhook nunca é tratado como verdade absoluta.
 
 Este endpoint é consumido pelo Banco Inter, não pelo SaaS. Documentado aqui só para contexto operacional.
+
+O Inter chama, na verdade, `POST /webhooks/inter/rec` (eventos de recorrência/autorização) e `POST /webhooks/inter/cobr` (eventos de cobrança/pagamento): a especificação do Bacen define os callbacks como `{webhookUrl}/rec` e `{webhookUrl}/cobr`, ou seja, o PSP acrescenta o sufixo à URL cadastrada. As três rotas funcionam e usam o mesmo handler.
+
+O cadastro dessas URLs no Inter é automático. Na subida do processo e a cada hora (`30 * * * *`, sob advisory lock), `ensureWebhooks` consulta `GET /pix/v2/webhookrec` e `GET /pix/v2/webhookcobr` e só faz `PUT` quando a URL está ausente ou aponta para outro lugar — a comparação ignora barra final. A URL registrada é `${APP_BASE_URL}/webhooks/inter`.
+
+Falha nesse cadastro **não impede o processo de subir**: com o Inter indisponível, recusar iniciar deixaria o SaaS sem conseguir nem consultar assinaturas existentes. O erro é logado e a próxima execução horária tenta de novo. Pelo mesmo motivo o estado do cadastro não entra no `GET /health` — um health check falhando por webhook ausente causaria restart loop no orquestrador.
 
 ## Webhook de saída (API → SaaS)
 

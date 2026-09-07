@@ -6,14 +6,20 @@ vi.mock('../providers/inter/pixAutomatico', () => ({
 }));
 
 vi.mock('../shared/config', () => ({
-  config: { interWebhookBaseUrl: 'https://api.exemplo.com/webhooks/inter' },
+  config: { appBaseUrl: 'https://api.exemplo.com' },
 }));
 
 import { getWebhook, putWebhook } from '../providers/inter/pixAutomatico';
-import { ensureWebhooks } from './webhookRegistration';
+import { ensureWebhooks, interWebhookUrl } from './webhookRegistration';
 
 const getWebhookMock = vi.mocked(getWebhook);
 const putWebhookMock = vi.mocked(putWebhook);
+
+describe('interWebhookUrl', () => {
+  it('monta a url do webhook a partir da base da aplicacao', () => {
+    expect(interWebhookUrl()).toBe('https://api.exemplo.com/webhooks/inter');
+  });
+});
 
 describe('ensureWebhooks', () => {
   beforeEach(() => {

@@ -13,6 +13,12 @@ export interface WebhookCheck {
 
 const KINDS: WebhookKind[] = ['rec', 'cobr'];
 
+export const INTER_WEBHOOK_PATH = '/webhooks/inter';
+
+export function interWebhookUrl(): string {
+  return `${config.appBaseUrl}${INTER_WEBHOOK_PATH}`;
+}
+
 function normalize(url: string): string {
   return url.replace(/\/+$/, '');
 }
@@ -34,7 +40,7 @@ async function ensureOne(kind: WebhookKind, desired: string): Promise<WebhookChe
 }
 
 export async function ensureWebhooks(): Promise<WebhookCheck[]> {
-  const desired = config.interWebhookBaseUrl;
+  const desired = interWebhookUrl();
   const results: WebhookCheck[] = [];
 
   for (const kind of KINDS) {
@@ -57,7 +63,7 @@ export async function ensureWebhooksAndLog(): Promise<WebhookCheck[]> {
       logger.info('webhook do inter cadastrado', {
         kind: result.kind,
         action: result.action,
-        url: config.interWebhookBaseUrl,
+        url: interWebhookUrl(),
       });
     }
   }

@@ -11,13 +11,26 @@ const validEnv = {
   INTER_CERT_PATH: './cert.crt',
   INTER_KEY_PATH: './cert.key',
   PIX_KEY: 'chave@pix.com',
-  INTER_WEBHOOK_BASE_URL: 'https://api.exemplo.com/webhooks/inter',
+  APP_BASE_URL: 'https://api.exemplo.com',
   INTER_RECEBEDOR_NOME: 'Empresa de Teste Ltda',
   INTER_RECEBEDOR_CNPJ: '12345678000199',
   INTER_RECEBEDOR_AGENCIA: '0001',
   INTER_RECEBEDOR_CONTA: '1234567',
   INTER_RECEBEDOR_TIPO_CONTA: 'CORRENTE',
 };
+
+describe('APP_BASE_URL', () => {
+  it('remove barra final para nao gerar url com barra dupla', () => {
+    const parsed = loadConfig({ ...validEnv, APP_BASE_URL: 'https://api.exemplo.com/' });
+    expect(parsed.appBaseUrl).toBe('https://api.exemplo.com');
+  });
+
+  it('recusa http', () => {
+    expect(() => loadConfig({ ...validEnv, APP_BASE_URL: 'http://api.exemplo.com' })).toThrow(
+      /https/,
+    );
+  });
+});
 
 describe('loadConfig', () => {
   it('aplica os defaults de janela quando as variaveis nao vem no ambiente', () => {
