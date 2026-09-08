@@ -1,4 +1,4 @@
-import { afterAll, afterEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import axios from 'axios';
 import { createHmac } from 'crypto';
 import { closePool, query } from '../shared/db';
@@ -23,6 +23,10 @@ describe('signPayload', () => {
 });
 
 describe('deliverPending', () => {
+  beforeEach(async () => {
+    await query('DELETE FROM webhook_deliveries');
+  });
+
   it('envia com os headers de assinatura e marca como entregue', async () => {
     const subscription = await createFixture();
     const event = await insertEvent({
