@@ -183,7 +183,14 @@ export async function createRecurrence(
     const response = await api.post('/pix/v2/rec', toRecurrenceBody(input), {
       headers: { 'Content-Type': 'application/json' },
     });
-    return toRecurrence(response.data);
+    const recurrence = toRecurrence(response.data);
+    logger.info('recorrencia criada no inter', {
+      operation: 'createRecurrence',
+      recId: recurrence.recId,
+      rawStatus: recurrence.rawStatus,
+      responseKeys: Object.keys(response.data ?? {}),
+    });
+    return recurrence;
   } catch (error) {
     fail('createRecurrence', error);
   }
@@ -194,6 +201,12 @@ export async function getRecurrence(recId: string): Promise<RecurrenceResponse> 
     const response = await api.get(`/pix/v2/rec/${recId}`);
     return toRecurrence(response.data);
   } catch (error) {
+    if (axios.isAxiosError(error) && error.response?.status === 404) {
+      logger.error('recorrencia nao encontrada no inter para o recId consultado', {
+        operation: 'getRecurrence',
+        recId,
+      });
+    }
     fail('getRecurrence', error);
   }
 }
