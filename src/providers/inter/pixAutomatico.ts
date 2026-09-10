@@ -196,18 +196,44 @@ export async function createRecurrence(
   }
 }
 
+const RECURRENCE_PROPAGATION_RETRY_DELAYS_MS = [400, 1200];
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function is404(error: unknown): boolean {
+  return axios.isAxiosError(error) && error.response?.status === 404;
+}
+
 export async function getRecurrence(recId: string): Promise<RecurrenceResponse> {
-  try {
-    const response = await api.get(`/pix/v2/rec/${recId}`);
-    return toRecurrence(response.data);
-  } catch (error) {
-    if (axios.isAxiosError(error) && error.response?.status === 404) {
-      logger.error('recorrencia nao encontrada no inter para o recId consultado', {
-        operation: 'getRecurrence',
-        recId,
-      });
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      const response = await api.get(`/pix/v2/rec/${recId}`);
+      return toRecurrence(response.data);
+    } catch (error) {
+      const delayMs = RECURRENCE_PROPAGATION_RETRY_DELAYS_MS[attempt];
+
+      if (is404(error) && delayMs !== undefined) {
+        logger.warn('recorrencia nao encontrada no inter, tentando de novo (possivel atraso de propagacao)', {
+          operation: 'getRecurrence',
+          recId,
+          attempt,
+          delayMs,
+        });
+        await sleep(delayMs);
+        continue;
+      }
+
+      if (is404(error)) {
+        logger.error('recorrencia nao encontrada no inter apos as tentativas de retentativa', {
+          operation: 'getRecurrence',
+          recId,
+        });
+      }
+
+      fail('getRecurrence', error);
     }
-    fail('getRecurrence', error);
   }
 }
 

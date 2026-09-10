@@ -177,6 +177,45 @@ describe('mapeamento de status de recorrencia', () => {
     expect(result.rawStatus).toBe('ALGO_NOVO');
   });
 });
+describe('getRecurrence com atraso de propagacao no inter', () => {
+  it('tenta de novo apos 404 e retorna sucesso quando a recorrencia aparece na segunda tentativa', async () => {
+    const get = vi
+      .spyOn(api, 'get')
+      .mockRejectedValueOnce({
+        isAxiosError: true,
+        response: { status: 404, data: { title: 'Nao encontrado' } },
+        message: 'not found',
+      })
+      .mockResolvedValueOnce({ data: { idRec: 'rec-1', status: 'CRIADA' } } as never);
+
+    const result = await getRecurrence('rec-1');
+
+    expect(get).toHaveBeenCalledTimes(2);
+    expect(result.rawStatus).toBe('CRIADA');
+  });
+
+  it('desiste apos esgotar as tentativas e mantem AppError.upstream', async () => {
+    const get = vi.spyOn(api, 'get').mockRejectedValue({
+      isAxiosError: true,
+      response: { status: 404, data: { title: 'Nao encontrado' } },
+      message: 'not found',
+    });
+
+    await expect(getRecurrence('rec-1')).rejects.toMatchObject({ code: 'UPSTREAM_ERROR' });
+    expect(get).toHaveBeenCalledTimes(3);
+  });
+
+  it('nao tenta de novo para erros diferentes de 404', async () => {
+    const get = vi.spyOn(api, 'get').mockRejectedValue({
+      isAxiosError: true,
+      response: { status: 500, data: { detalhe: 'segredo interno' } },
+      message: 'boom',
+    });
+
+    await expect(getRecurrence('rec-1')).rejects.toMatchObject({ code: 'UPSTREAM_ERROR' });
+    expect(get).toHaveBeenCalledTimes(1);
+  });
+});
 
 describe('cancelRecurrence', () => {
   it('trata recorrencia inexistente (404) como sucesso', async () => {
