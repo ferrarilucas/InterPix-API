@@ -105,7 +105,7 @@ function devedorFrom(input: CreateRecurrenceInput): Record<string, unknown> {
   return { cpf: input.debtorTaxId, nome: input.debtorName };
 }
 
-function toRecurrenceBody(input: CreateRecurrenceInput): Record<string, unknown> {
+function toRecurrenceBody(input: CreateRecurrenceInput, locId: number): Record<string, unknown> {
   return {
     vinculo: {
       devedor: devedorFrom(input),
@@ -118,7 +118,19 @@ function toRecurrenceBody(input: CreateRecurrenceInput): Record<string, unknown>
     },
     valor: { valorRec: input.amount },
     politicaRetentativa: 'PERMITE_3R_7D',
+    loc: locId,
   };
+}
+
+async function createRecLocation(): Promise<number> {
+  try {
+    const response = await api.post('/pix/v2/locrec', undefined, {
+      headers: { 'Content-Type': 'application/json' },
+    });
+    return Number(response.data?.id);
+  } catch (error) {
+    fail('createRecLocation', error);
+  }
 }
 
 function toRecurrence(data: Record<string, unknown>): RecurrenceResponse {
@@ -179,8 +191,10 @@ function toCharge(data: Record<string, unknown>): ChargeResponse {
 export async function createRecurrence(
   input: CreateRecurrenceInput,
 ): Promise<RecurrenceResponse> {
+  const locId = await createRecLocation();
+
   try {
-    const response = await api.post('/pix/v2/rec', toRecurrenceBody(input), {
+    const response = await api.post('/pix/v2/rec', toRecurrenceBody(input, locId), {
       headers: { 'Content-Type': 'application/json' },
     });
     const recurrence = toRecurrence(response.data);

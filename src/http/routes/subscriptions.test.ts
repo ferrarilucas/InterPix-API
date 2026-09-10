@@ -134,7 +134,7 @@ describe('POST /subscriptions', () => {
       });
 
     expect(response.status).toBe(201);
-    const body = post.mock.calls[0][1] as { vinculo: { devedor: Record<string, unknown> } };
+    const body = post.mock.calls[1][1] as { vinculo: { devedor: Record<string, unknown> } };
     expect(body.vinculo.devedor.cnpj).toBe('12345678901234');
   });
 

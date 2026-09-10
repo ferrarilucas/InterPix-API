@@ -14,11 +14,16 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+function mockLocThenRec(recData: Record<string, unknown>, locId = 555) {
+  return vi
+    .spyOn(api, 'post')
+    .mockResolvedValueOnce({ data: { id: locId, location: 'pix.example.com/qr/v2/rec/abc' } } as never)
+    .mockResolvedValueOnce({ data: recData } as never);
+}
+
 describe('createRecurrence', () => {
-  it('sempre envia a recorrencia com retentativa habilitada', async () => {
-    const post = vi.spyOn(api, 'post').mockResolvedValue({
-      data: { idRec: 'rec-1', status: 'CRIADA' },
-    } as never);
+  it('cria a location da recorrencia antes de criar a recorrencia, e referencia o id retornado', async () => {
+    const post = mockLocThenRec({ idRec: 'rec-1', status: 'CRIADA' });
 
     await createRecurrence({
       amount: '29.90',
@@ -29,14 +34,30 @@ describe('createRecurrence', () => {
       planCode: 'mensal_29_90',
     });
 
-    const body = post.mock.calls[0][1] as Record<string, unknown>;
+    expect(post).toHaveBeenNthCalledWith(1, '/pix/v2/locrec', undefined, expect.anything());
+    expect(post.mock.calls[1][0]).toBe('/pix/v2/rec');
+    const body = post.mock.calls[1][1] as Record<string, unknown>;
+    expect(body.loc).toBe(555);
+  });
+
+  it('sempre envia a recorrencia com retentativa habilitada', async () => {
+    const post = mockLocThenRec({ idRec: 'rec-1', status: 'CRIADA' });
+
+    await createRecurrence({
+      amount: '29.90',
+      intervalMonths: 1,
+      firstDueDate: '2026-09-20',
+      debtorTaxId: '12345678901',
+      debtorName: 'Fulano',
+      planCode: 'mensal_29_90',
+    });
+
+    const body = post.mock.calls[1][1] as Record<string, unknown>;
     expect(body.politicaRetentativa).toBe('PERMITE_3R_7D');
   });
 
   it('envia o devedor como cpf quando o documento tem 11 digitos', async () => {
-    const post = vi.spyOn(api, 'post').mockResolvedValue({
-      data: { idRec: 'rec-cpf', status: 'CRIADA' },
-    } as never);
+    const post = mockLocThenRec({ idRec: 'rec-cpf', status: 'CRIADA' });
 
     await createRecurrence({
       amount: '29.90',
@@ -47,15 +68,13 @@ describe('createRecurrence', () => {
       planCode: 'mensal_29_90',
     });
 
-    const body = post.mock.calls[0][1] as { vinculo: { devedor: Record<string, unknown> } };
+    const body = post.mock.calls[1][1] as { vinculo: { devedor: Record<string, unknown> } };
     expect(body.vinculo.devedor.cpf).toBe('12345678901');
     expect(body.vinculo.devedor.cnpj).toBeUndefined();
   });
 
   it('envia o devedor como cnpj quando o documento tem 14 digitos', async () => {
-    const post = vi.spyOn(api, 'post').mockResolvedValue({
-      data: { idRec: 'rec-cnpj', status: 'CRIADA' },
-    } as never);
+    const post = mockLocThenRec({ idRec: 'rec-cnpj', status: 'CRIADA' });
 
     await createRecurrence({
       amount: '29.90',
@@ -66,15 +85,13 @@ describe('createRecurrence', () => {
       planCode: 'mensal_29_90',
     });
 
-    const body = post.mock.calls[0][1] as { vinculo: { devedor: Record<string, unknown> } };
+    const body = post.mock.calls[1][1] as { vinculo: { devedor: Record<string, unknown> } };
     expect(body.vinculo.devedor.cnpj).toBe('12345678901234');
     expect(body.vinculo.devedor.cpf).toBeUndefined();
   });
 
   it('envia o planCode como vinculo.contrato', async () => {
-    const post = vi.spyOn(api, 'post').mockResolvedValue({
-      data: { idRec: 'rec-contrato', status: 'CRIADA' },
-    } as never);
+    const post = mockLocThenRec({ idRec: 'rec-contrato', status: 'CRIADA' });
 
     await createRecurrence({
       amount: '29.90',
@@ -85,14 +102,12 @@ describe('createRecurrence', () => {
       planCode: 'mensal_29_90',
     });
 
-    const body = post.mock.calls[0][1] as { vinculo: { contrato: string } };
+    const body = post.mock.calls[1][1] as { vinculo: { contrato: string } };
     expect(body.vinculo.contrato).toBe('mensal_29_90');
   });
 
   it('mapeia a resposta do Inter para o formato interno', async () => {
-    vi.spyOn(api, 'post').mockResolvedValue({
-      data: { idRec: 'rec-2', status: 'CRIADA' },
-    } as never);
+    mockLocThenRec({ idRec: 'rec-2', status: 'CRIADA' });
 
     const result = await createRecurrence({
       amount: '29.90',
@@ -109,11 +124,13 @@ describe('createRecurrence', () => {
   });
 
   it('converte falha do Inter em AppError.upstream sem vazar o corpo', async () => {
-    vi.spyOn(api, 'post').mockRejectedValue({
-      isAxiosError: true,
-      response: { status: 500, data: { detalhe: 'segredo interno' } },
-      message: 'boom',
-    });
+    vi.spyOn(api, 'post')
+      .mockResolvedValueOnce({ data: { id: 555 } } as never)
+      .mockRejectedValueOnce({
+        isAxiosError: true,
+        response: { status: 500, data: { detalhe: 'segredo interno' } },
+        message: 'boom',
+      });
 
     await expect(
       createRecurrence({
@@ -128,7 +145,9 @@ describe('createRecurrence', () => {
   });
 
   it('converte falha nao-axios (sem response) em AppError.upstream', async () => {
-    vi.spyOn(api, 'post').mockRejectedValue(new Error('falha de rede generica'));
+    vi.spyOn(api, 'post')
+      .mockResolvedValueOnce({ data: { id: 555 } } as never)
+      .mockRejectedValueOnce(new Error('falha de rede generica'));
 
     await expect(
       createRecurrence({
@@ -140,6 +159,27 @@ describe('createRecurrence', () => {
         planCode: 'mensal_29_90',
       }),
     ).rejects.toMatchObject({ code: 'UPSTREAM_ERROR' });
+  });
+
+  it('nao chega a chamar POST /rec se a criacao da location falhar', async () => {
+    const post = vi.spyOn(api, 'post').mockRejectedValue({
+      isAxiosError: true,
+      response: { status: 403, data: { title: 'Acesso negado' } },
+      message: 'forbidden',
+    });
+
+    await expect(
+      createRecurrence({
+        amount: '29.90',
+        intervalMonths: 1,
+        firstDueDate: '2026-09-20',
+        debtorTaxId: '12345678901',
+        debtorName: 'Fulano',
+        planCode: 'mensal_29_90',
+      }),
+    ).rejects.toMatchObject({ code: 'UPSTREAM_ERROR' });
+    expect(post).toHaveBeenCalledTimes(1);
+    expect(post).toHaveBeenCalledWith('/pix/v2/locrec', undefined, expect.anything());
   });
 });
 
