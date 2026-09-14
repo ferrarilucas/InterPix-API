@@ -251,6 +251,17 @@ export async function getRecurrence(recId: string): Promise<RecurrenceResponse> 
   }
 }
 
+const TERMINAL_RECURRENCE_STATUSES: ReadonlySet<RecurrenceStatus> = new Set(['DENIED', 'CANCELED']);
+
+async function isAlreadyTerminalAtInter(recId: string): Promise<boolean> {
+  try {
+    const current = await getRecurrence(recId);
+    return TERMINAL_RECURRENCE_STATUSES.has(current.status);
+  } catch {
+    return false;
+  }
+}
+
 export async function cancelRecurrence(recId: string): Promise<void> {
   try {
     await api.patch(
@@ -263,6 +274,13 @@ export async function cancelRecurrence(recId: string): Promise<void> {
       logger.warn('recorrencia ja cancelada ou inexistente no inter', {
         operation: 'cancelRecurrence',
         status: axios.isAxiosError(error) ? error.response?.status : undefined,
+      });
+      return;
+    }
+
+    if (axios.isAxiosError(error) && error.response?.status === 400 && (await isAlreadyTerminalAtInter(recId))) {
+      logger.warn('recorrencia ja estava em estado terminal no inter, cancelamento tratado como no-op', {
+        operation: 'cancelRecurrence',
       });
       return;
     }

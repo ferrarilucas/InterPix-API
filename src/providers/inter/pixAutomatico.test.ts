@@ -295,12 +295,15 @@ describe('cancelRecurrence', () => {
     await expect(cancelRecurrence('rec-3')).rejects.toBeInstanceOf(AppError);
   });
 
-  it('mantem AppError.upstream para 400 que nao indica cancelamento previo', async () => {
+  it('mantem AppError.upstream para 400 que nao indica cancelamento previo, mesmo com a recorrencia ainda ativa no inter', async () => {
     vi.spyOn(api, 'patch').mockRejectedValue({
       isAxiosError: true,
       response: { status: 400, data: { title: 'Valor invalido' } },
       message: 'bad request',
     });
+    vi.spyOn(api, 'get').mockResolvedValue({
+      data: { idRec: 'rec-4', status: 'ENVIADA' },
+    } as never);
 
     await expect(cancelRecurrence('rec-4')).rejects.toMatchObject({ code: 'UPSTREAM_ERROR' });
   });
@@ -309,6 +312,57 @@ describe('cancelRecurrence', () => {
     vi.spyOn(api, 'patch').mockRejectedValue(new Error('falha de rede generica'));
 
     await expect(cancelRecurrence('rec-5')).rejects.toMatchObject({ code: 'UPSTREAM_ERROR' });
+  });
+
+  it('trata como sucesso um 400 com texto diferente do esperado, quando o inter confirma que a recorrencia ja esta CANCELADA', async () => {
+    vi.spyOn(api, 'patch').mockRejectedValue({
+      isAxiosError: true,
+      response: {
+        status: 400,
+        data: {
+          type: 'https://pix.bcb.gov.br/api/v2/error/RecOperacaoInvalida',
+          title: 'Operacao Invalida',
+          detail: 'A recorrencia a ser alterada possui status diferente do necessario para a alteracao',
+        },
+      },
+      message: 'bad request',
+    });
+    vi.spyOn(api, 'get').mockResolvedValue({
+      data: { idRec: 'rec-6', status: 'CANCELADA' },
+    } as never);
+
+    await expect(cancelRecurrence('rec-6')).resolves.toBeUndefined();
+  });
+
+  it('trata como sucesso um 400 nao reconhecido pelo texto, quando o inter confirma que a recorrencia ja esta REJEITADA', async () => {
+    vi.spyOn(api, 'patch').mockRejectedValue({
+      isAxiosError: true,
+      response: {
+        status: 400,
+        data: { title: 'Operacao Invalida', detail: 'status diferente do necessario' },
+      },
+      message: 'bad request',
+    });
+    vi.spyOn(api, 'get').mockResolvedValue({
+      data: { idRec: 'rec-7', status: 'REJEITADA' },
+    } as never);
+
+    await expect(cancelRecurrence('rec-7')).resolves.toBeUndefined();
+  });
+
+  it('nao mascara um 400 real quando a consulta de confirmacao tambem falha', async () => {
+    vi.spyOn(api, 'patch').mockRejectedValue({
+      isAxiosError: true,
+      response: { status: 400, data: { title: 'Operacao Invalida' } },
+      message: 'bad request',
+    });
+    vi.spyOn(api, 'get').mockRejectedValue({
+      isAxiosError: true,
+      response: { status: 500, data: { detalhe: 'segredo interno' } },
+      message: 'boom',
+    });
+
+    await expect(cancelRecurrence('rec-8')).rejects.toMatchObject({ code: 'UPSTREAM_ERROR' });
   });
 });
 
