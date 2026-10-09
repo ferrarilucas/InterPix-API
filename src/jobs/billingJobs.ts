@@ -522,6 +522,13 @@ async function reconcileCycles(today: string): Promise<number> {
 
     try {
       const charge = await inter.getChargeByTxid(cycle.interTxid);
+      logger.info('cobranca consultada no inter pela reconciliacao', {
+        cycleId: cycle.id,
+        txid: cycle.interTxid,
+        cycleStatus: cycle.status,
+        interStatus: charge.status,
+        rawStatus: charge.rawStatus,
+      });
       await applyChargeStatus(cycle, charge);
       checked += 1;
     } catch (error) {
@@ -546,6 +553,13 @@ async function reconcilePendingAuth(): Promise<number> {
 
     try {
       const recurrence = await inter.getRecurrence(subscription.interRecId);
+      logger.info('recorrencia consultada no inter pela reconciliacao', {
+        subscriptionId: subscription.id,
+        recId: subscription.interRecId,
+        createdAt: subscription.createdAt,
+        interStatus: recurrence.status,
+        rawStatus: recurrence.rawStatus,
+      });
 
       if (recurrence.status === 'APPROVED') {
         assertSubscriptionTransition(subscription.status, 'ACTIVE');
@@ -565,6 +579,11 @@ async function reconcilePendingAuth(): Promise<number> {
           await enqueueDelivery(event.id, 'subscription.authorized', {
             subscriptionId: subscription.id,
             externalUserId: subscription.externalUserId,
+          });
+          logger.info('autorizacao aplicada pela reconciliacao', {
+            subscriptionId: subscription.id,
+            recId: subscription.interRecId,
+            eventId: event.id,
           });
         }
       } else if (recurrence.status === 'DENIED') {
@@ -603,5 +622,6 @@ async function reconcilePendingAuth(): Promise<number> {
 export async function reconcile(today: string = businessToday()): Promise<number> {
   const cyclesChecked = await reconcileCycles(today);
   const subscriptionsChecked = await reconcilePendingAuth();
+  logger.info('reconciliacao concluida', { cyclesChecked, subscriptionsChecked });
   return cyclesChecked + subscriptionsChecked;
 }

@@ -42,6 +42,16 @@ describe('logger', () => {
     expect(emitted.debtor.name).toBe('Fulano');
   });
 
+  it('preserva o titulo quando o meta tambem traz um campo message, movendo-o para detail', () => {
+    const spy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+
+    logger.error('falha ao processar webhook do inter', { message: 'Connection terminated' });
+
+    const emitted = JSON.parse(spy.mock.calls[0][0] as string);
+    expect(emitted.message).toBe('falha ao processar webhook do inter');
+    expect(emitted.detail).toBe('Connection terminated');
+  });
+
   it('carrega o requestId em toda saida do logger de request', () => {
     const spy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
 

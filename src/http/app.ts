@@ -1,5 +1,6 @@
 import express, { Express, Request, Response } from 'express';
 import { requestContext } from './middlewares/requestContext';
+import { accessLog } from './middlewares/accessLog';
 import { requireAuth } from './middlewares/auth';
 import { errorHandler, notFoundHandler } from './middlewares/errorHandler';
 import { subscriptionRoutes } from './routes/subscriptions';
@@ -8,8 +9,9 @@ import { interWebhookRoutes } from './routes/interWebhook';
 export function createApp(): Express {
   const app = express();
 
-  app.use(express.json({ limit: '256kb' }));
   app.use(requestContext);
+  app.use(accessLog);
+  app.use(express.json({ limit: '256kb' }));
 
   app.get('/health', (_req: Request, res: Response) => {
     res.status(200).json({ status: 'ok' });

@@ -288,7 +288,7 @@ describe('POST /webhooks/inter', () => {
     await updateCycleStatus(cycle.id, 'SENT', { interTxid: txid });
 
     vi.spyOn(inter, 'getChargeByTxid').mockRejectedValue(new Error('inter fora do ar'));
-    const logError = vi.spyOn(logger, 'error').mockImplementation(() => {});
+    const output = vi.spyOn(console, 'log').mockImplementation(() => {});
 
     const response = await request(app)
       .post('/webhooks/inter')
@@ -297,7 +297,10 @@ describe('POST /webhooks/inter', () => {
     expect(response.status).toBe(200);
 
     await vi.waitFor(() => {
-      expect(logError).toHaveBeenCalled();
+      const lines = output.mock.calls.map((call) => JSON.parse(call[0] as string));
+      const failure = lines.find((line) => line.message === 'falha ao processar webhook do inter');
+      expect(failure?.level).toBe('error');
+      expect(failure?.detail).toBe('inter fora do ar');
     }, WAIT_FOR_OPTS);
   });
 

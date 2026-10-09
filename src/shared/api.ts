@@ -2,6 +2,7 @@ import axios, { AxiosError, AxiosHeaders } from 'axios';
 import https from 'https';
 import fs from 'fs';
 import 'dotenv/config';
+import { logger } from './logger';
 
 const { INTER_CERT_PATH, INTER_KEY_PATH, INTER_CLIENT_ID, INTER_CLIENT_SECRET } = process.env;
 
@@ -102,3 +103,46 @@ api.interceptors.request.use(async (config) => {
   }
   return config;
 });
+const startedAtKey = Symbol('startedAt');
+
+type TimedConfig = { [startedAtKey]?: number };
+
+function recurrenceHistory(path: string, data: unknown): Record<string, unknown> {
+  if (!/^\/pix\/v2\/rec\/[^/]+$/.test(path) || data === null || typeof data !== 'object') {
+    return {};
+  }
+  const body = data as { status?: unknown; atualizacao?: unknown };
+  return { recStatus: body.status ?? null, recHistory: body.atualizacao ?? null };
+}
+
+api.interceptors.request.use((config) => {
+  (config as TimedConfig)[startedAtKey] = Date.now();
+  return config;
+});
+
+api.interceptors.response.use(
+  (response) => {
+    const startedAt = (response.config as TimedConfig)[startedAtKey];
+    const path = response.config.url ?? '';
+    logger.info('chamada a api do inter', {
+      method: response.config.method?.toUpperCase() ?? null,
+      path,
+      status: response.status,
+      durationMs: startedAt ? Date.now() - startedAt : null,
+      ...recurrenceHistory(path, response.data),
+    });
+    return response;
+  },
+  (error: AxiosError) => {
+    const startedAt = error.config ? (error.config as TimedConfig)[startedAtKey] : undefined;
+    logger.warn('chamada a api do inter falhou', {
+      method: error.config?.method?.toUpperCase() ?? null,
+      path: error.config?.url ?? null,
+      status: error.response?.status ?? null,
+      durationMs: startedAt ? Date.now() - startedAt : null,
+      responseBody: error.response?.data ?? null,
+      message: error.message,
+    });
+    return Promise.reject(error);
+  },
+);

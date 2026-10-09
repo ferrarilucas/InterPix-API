@@ -65,6 +65,11 @@ export async function ensureWebhooksAndLog(): Promise<WebhookCheck[]> {
         action: result.action,
         url: interWebhookUrl(),
       });
+    } else {
+      logger.info('webhook do inter ja cadastrado na url esperada', {
+        kind: result.kind,
+        url: interWebhookUrl(),
+      });
     }
   }
 

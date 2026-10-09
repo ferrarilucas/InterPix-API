@@ -44,7 +44,7 @@ export async function deliverPending(now?: Date): Promise<{ delivered: number; f
     const signature = signPayload(body, timestamp, config.saasWebhookSecret);
 
     try {
-      await axios.post(delivery.targetUrl, body, {
+      const response = await axios.post(delivery.targetUrl, body, {
         timeout: 10_000,
         headers: {
           'Content-Type': 'application/json',
@@ -54,6 +54,13 @@ export async function deliverPending(now?: Date): Promise<{ delivered: number; f
       });
       await markDelivered(delivery.id);
       delivered += 1;
+      logger.info('webhook entregue ao saas', {
+        deliveryId: delivery.id,
+        type: (delivery.payload as { type?: string }).type ?? null,
+        attempt: delivery.attempts + 1,
+        status: response.status,
+        responseBody: response.data ?? null,
+      });
     } catch (error) {
       const message = (error as Error).message;
       const nextDelay = RETRY_SCHEDULE_MINUTES[delivery.attempts];
@@ -69,7 +76,12 @@ export async function deliverPending(now?: Date): Promise<{ delivered: number; f
         await markRetry(delivery.id, message, nextDelay);
         logger.warn('entrega de webhook falhou, reagendada', {
           deliveryId: delivery.id,
+          type: (delivery.payload as { type?: string }).type ?? null,
+          attempt: delivery.attempts + 1,
+          status: axios.isAxiosError(error) ? error.response?.status ?? null : null,
+          responseBody: axios.isAxiosError(error) ? error.response?.data ?? null : null,
           nextDelay,
+          message,
         });
       }
     }

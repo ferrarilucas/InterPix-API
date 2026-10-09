@@ -1,6 +1,6 @@
 import { createHash } from 'crypto';
 import * as inter from '../providers/inter/pixAutomatico';
-import { logger } from '../shared/logger';
+import { Logger, logger } from '../shared/logger';
 import { findCycleByTxid } from '../repositories/cycles';
 import {
   findSubscriptionByRecId,
@@ -25,27 +25,41 @@ function dedupeKeyFor(payload: InterWebhookPayload): string {
   return `raw:${createHash('sha256').update(JSON.stringify(payload)).digest('hex')}`;
 }
 
-async function processCharge(txid: string): Promise<void> {
+async function processCharge(txid: string, log: Logger): Promise<void> {
   const cycle = await findCycleByTxid(txid);
 
   if (!cycle) {
-    logger.warn('webhook para txid desconhecido', { txid });
+    log.warn('webhook para txid desconhecido', { txid });
     return;
   }
 
   const charge = await inter.getChargeByTxid(txid);
+  log.info('cobranca consultada no inter pelo webhook', {
+    txid,
+    cycleId: cycle.id,
+    cycleStatus: cycle.status,
+    interStatus: charge.status,
+    rawStatus: charge.rawStatus,
+  });
   await applyChargeStatus(cycle, charge);
 }
 
-async function processRecurrence(recId: string): Promise<void> {
+async function processRecurrence(recId: string, log: Logger): Promise<void> {
   const subscription = await findSubscriptionByRecId(recId);
 
   if (!subscription) {
-    logger.warn('webhook para rec desconhecida', { recId });
+    log.warn('webhook para rec desconhecida', { recId });
     return;
   }
 
   const recurrence = await inter.getRecurrence(recId);
+  log.info('recorrencia consultada no inter pelo webhook', {
+    recId,
+    subscriptionId: subscription.id,
+    subscriptionStatus: subscription.status,
+    interStatus: recurrence.status,
+    rawStatus: recurrence.rawStatus,
+  });
 
   if (recurrence.status === 'APPROVED' && subscription.status === 'PENDING_AUTH') {
     assertSubscriptionTransition(subscription.status, 'ACTIVE');
@@ -54,6 +68,7 @@ async function processRecurrence(recId: string): Promise<void> {
     });
 
     if (!updated) {
+      log.info('autorizacao ja aplicada por outro caminho', { recId, subscriptionId: subscription.id });
       return;
     }
 
@@ -66,6 +81,11 @@ async function processRecurrence(recId: string): Promise<void> {
       subscriptionId: subscription.id,
       externalUserId: subscription.externalUserId,
     });
+    log.info('autorizacao aplicada pelo webhook', {
+      recId,
+      subscriptionId: subscription.id,
+      eventId: event.id,
+    });
     return;
   }
 
@@ -74,8 +94,15 @@ async function processRecurrence(recId: string): Promise<void> {
     const updated = await updateSubscriptionStatusIf(subscription.id, 'PENDING_AUTH', 'AUTH_DENIED');
 
     if (!updated) {
+      log.info('negativa ja aplicada por outro caminho', { recId, subscriptionId: subscription.id });
       return;
     }
+
+    log.info('negativa de autorizacao aplicada pelo webhook', {
+      recId,
+      subscriptionId: subscription.id,
+      rawStatus: recurrence.rawStatus,
+    });
 
     const event = await insertEvent({
       subscriptionId: subscription.id,
@@ -89,18 +116,23 @@ async function processRecurrence(recId: string): Promise<void> {
   }
 }
 
-export async function processInterEvent(payload: InterWebhookPayload): Promise<void> {
+export async function processInterEvent(
+  payload: InterWebhookPayload,
+  log: Logger = logger,
+): Promise<void> {
   const receipt = await insertReceipt(dedupeKeyFor(payload), payload);
 
   if (!receipt.processable) {
+    log.info('webhook do inter ja processado antes, ignorado', { receiptId: receipt.id });
     return;
   }
 
   if (payload.txid) {
-    await processCharge(payload.txid);
+    await processCharge(payload.txid, log);
   } else if (payload.idRec) {
-    await processRecurrence(payload.idRec);
+    await processRecurrence(payload.idRec, log);
   }
 
   await markReceiptProcessed(receipt.id);
+  log.info('webhook do inter processado', { receiptId: receipt.id });
 }

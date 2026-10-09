@@ -49,13 +49,14 @@ function sanitize(value: unknown, visited = new WeakSet<object>()): unknown {
 }
 
 function emit(level: Level, message: string, meta: Record<string, unknown>): void {
-  const sanitized = sanitize(meta) as Record<string, unknown>;
+  const { message: detail, ...rest } = sanitize(meta) as Record<string, unknown>;
   console.log(
     JSON.stringify({
+      ...rest,
+      ...(detail !== undefined ? { detail } : {}),
       level,
       message,
       timestamp: new Date().toISOString(),
-      ...sanitized,
     }),
   );
 }
