@@ -3,6 +3,7 @@ import { createHmac } from 'crypto';
 import { PoolClient } from 'pg';
 import { config } from '../shared/config';
 import { logger } from '../shared/logger';
+import { LOCK_KEYS, withAdvisoryLock } from '../jobs/lock';
 import {
   insertDelivery,
   listDueDeliveries,
@@ -88,4 +89,14 @@ export async function deliverPending(now?: Date): Promise<{ delivered: number; f
   }
 
   return { delivered, failed };
+}
+
+export async function deliverNow(): Promise<void> {
+  try {
+    await withAdvisoryLock(LOCK_KEYS.deliveries, () => deliverPending());
+  } catch (error) {
+    logger.error('falha na entrega imediata de webhooks', {
+      message: (error as Error).message,
+    });
+  }
 }

@@ -1,8 +1,9 @@
 import { randomUUID } from 'crypto';
-import { afterAll, afterEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import axios from 'axios';
 import request from 'supertest';
 import { createApp } from '../app';
-import { closePool } from '../../shared/db';
+import { closePool, pool, query } from '../../shared/db';
 import { AppError } from '../../shared/errors';
 import * as inter from '../../providers/inter/pixAutomatico';
 import {
@@ -12,11 +13,17 @@ import {
 import { insertCycle, findCycleById, updateCycleStatus } from '../../repositories/cycles';
 import { updateSubscriptionStatus, findSubscriptionById } from '../../repositories/subscriptions';
 import * as webhookDispatcher from '../../domain/webhookDispatcher';
+import { deliverPending } from '../../domain/webhookDispatcher';
+import { LOCK_KEYS } from '../../jobs/lock';
 import * as webhookReceipts from '../../repositories/webhookReceipts';
 import { logger } from '../../shared/logger';
 
 const app = createApp();
 const WAIT_FOR_OPTS = { timeout: 2000, interval: 20 };
+
+beforeEach(() => {
+  vi.spyOn(axios, 'post').mockResolvedValue({ status: 200, data: { outcome: 'applied' } } as never);
+});
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -465,5 +472,52 @@ describe('formato real do Inter (lista recs/cobsr do padrao Bacen)', () => {
     await new Promise((resolve) => setTimeout(resolve, 100));
     expect(getRecurrence).not.toHaveBeenCalled();
     expect(getCharge).not.toHaveBeenCalled();
+  });
+});
+
+describe('entrega imediata ao saas', () => {
+  beforeEach(async () => {
+    await query('DELETE FROM webhook_deliveries');
+  });
+
+  it('entrega subscription.authorized ao saas logo depois do webhook, sem esperar o job', async () => {
+    const subscription = await createFixture();
+    const recId = `RR${randomUUID().replace(/-/g, '')}`;
+    await updateSubscriptionStatus(subscription.id, 'PENDING_AUTH', { interRecId: recId });
+    vi.spyOn(inter, 'getRecurrence').mockResolvedValue({ recId, status: 'APPROVED', rawStatus: 'APROVADA' });
+    const post = vi.mocked(axios.post);
+
+    await request(app).post('/webhooks/inter').send({ recs: [{ idRec: recId, status: 'APROVADA' }] });
+
+    await vi.waitFor(() => {
+      const bodies = post.mock.calls.map((call) => String(call[1]));
+      expect(bodies.some((body) => body.includes('subscription.authorized'))).toBe(true);
+    }, WAIT_FOR_OPTS);
+  });
+
+  it('com o lock de entregas ocupado, deixa a entrega para o job sem duplicar', async () => {
+    const subscription = await createFixture();
+    const recId = `RR${randomUUID().replace(/-/g, '')}`;
+    await updateSubscriptionStatus(subscription.id, 'PENDING_AUTH', { interRecId: recId });
+    vi.spyOn(inter, 'getRecurrence').mockResolvedValue({ recId, status: 'APPROVED', rawStatus: 'APROVADA' });
+    const post = vi.mocked(axios.post);
+    const holder = await pool.connect();
+    await holder.query('SELECT pg_advisory_lock($1)', [LOCK_KEYS.deliveries]);
+
+    try {
+      await request(app).post('/webhooks/inter').send({ recs: [{ idRec: recId, status: 'APROVADA' }] });
+      await vi.waitFor(async () => {
+        expect((await findSubscriptionById(subscription.id))?.status).toBe('ACTIVE');
+      }, WAIT_FOR_OPTS);
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      expect(post).not.toHaveBeenCalled();
+    } finally {
+      await holder.query('SELECT pg_advisory_unlock($1)', [LOCK_KEYS.deliveries]);
+      holder.release();
+    }
+
+    await deliverPending();
+    const authorizedCalls = post.mock.calls.filter((call) => String(call[1]).includes('subscription.authorized'));
+    expect(authorizedCalls).toHaveLength(1);
   });
 });

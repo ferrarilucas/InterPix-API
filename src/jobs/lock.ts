@@ -1,5 +1,12 @@
 import { pool } from '../shared/db';
 
+export const LOCK_KEYS = {
+  daily: 1001,
+  reconcile: 1002,
+  deliveries: 1003,
+  webhooks: 1004,
+} as const;
+
 export async function withAdvisoryLock<T>(
   key: number,
   fn: () => Promise<T>,

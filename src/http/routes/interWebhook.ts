@@ -1,6 +1,7 @@
 import express, { Request, Response, Router } from 'express';
 import { z } from 'zod';
 import { logger } from '../../shared/logger';
+import { deliverNow } from '../../domain/webhookDispatcher';
 import { extractInterNotifications, processInterEvent } from '../../domain/webhookProcessor';
 
 const interWebhookSchema = z
@@ -47,13 +48,15 @@ export function interWebhookRoutes(): Router {
     }
 
     for (const notification of notifications) {
-      processInterEvent(notification, req.log).catch((error) => {
-        req.log.error('falha ao processar webhook do inter', {
-          idRec: notification.idRec ?? null,
-          txid: notification.txid ?? null,
-          message: (error as Error).message,
+      processInterEvent(notification, req.log)
+        .then(() => deliverNow())
+        .catch((error) => {
+          req.log.error('falha ao processar webhook do inter', {
+            idRec: notification.idRec ?? null,
+            txid: notification.txid ?? null,
+            message: (error as Error).message,
+          });
         });
-      });
     }
   };
 

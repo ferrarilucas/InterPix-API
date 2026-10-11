@@ -1,9 +1,9 @@
 import cron from 'node-cron';
 import { logger } from '../shared/logger';
 import { businessToday } from '../domain/schedule';
-import { deliverPending } from '../domain/webhookDispatcher';
+import { deliverNow, deliverPending } from '../domain/webhookDispatcher';
 import { ensureWebhooksAndLog } from '../domain/webhookRegistration';
-import { withAdvisoryLock } from './lock';
+import { LOCK_KEYS, withAdvisoryLock } from './lock';
 import {
   cancelUnsendableCycles,
   escalateStaleCycles,
@@ -13,13 +13,6 @@ import {
   retryFailed,
   sendCharges,
 } from './billingJobs';
-
-const LOCK_KEYS = {
-  daily: 1001,
-  reconcile: 1002,
-  deliveries: 1003,
-  webhooks: 1004,
-};
 
 async function runDaily(): Promise<void> {
   const date = businessToday();
@@ -47,9 +40,11 @@ export function startScheduler(): void {
   });
 
   cron.schedule('0 * * * *', () => {
-    withAdvisoryLock(LOCK_KEYS.reconcile, reconcile).catch((error) =>
-      logger.error('falha na reconciliacao', { message: (error as Error).message }),
-    );
+    withAdvisoryLock(LOCK_KEYS.reconcile, reconcile)
+      .then(() => deliverNow())
+      .catch((error) =>
+        logger.error('falha na reconciliacao', { message: (error as Error).message }),
+      );
   });
 
   cron.schedule('30 * * * *', () => {

@@ -1,9 +1,14 @@
-import { afterAll, afterEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import axios from 'axios';
 import request from 'supertest';
 import { createApp } from '../app';
 import { closePool } from '../../shared/db';
 
 const app = createApp();
+
+beforeEach(() => {
+  vi.spyOn(axios, 'post').mockResolvedValue({ status: 200, data: { outcome: 'applied' } } as never);
+});
 
 afterEach(() => {
   vi.restoreAllMocks();
