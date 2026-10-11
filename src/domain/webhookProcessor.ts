@@ -18,6 +18,36 @@ export interface InterWebhookPayload {
   eventId?: string;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function listItems(body: Record<string, unknown>, key: string): Record<string, unknown>[] {
+  const value = body[key];
+  return Array.isArray(value) ? value.filter(isRecord) : [];
+}
+
+export function extractInterNotifications(body: unknown): InterWebhookPayload[] {
+  if (!isRecord(body)) {
+    return [];
+  }
+
+  const recurrences = listItems(body, 'recs')
+    .filter((item) => typeof item.idRec === 'string')
+    .map((item) => ({ ...item, idRec: item.idRec as string, txid: undefined }));
+
+  const charges = listItems(body, 'cobsr')
+    .filter((item) => typeof item.txid === 'string')
+    .map((item) => ({ ...item, txid: item.txid as string }));
+
+  const legacy =
+    typeof body.txid === 'string' || typeof body.idRec === 'string'
+      ? [body as InterWebhookPayload]
+      : [];
+
+  return [...recurrences, ...charges, ...legacy];
+}
+
 function dedupeKeyFor(payload: InterWebhookPayload): string {
   if (payload.eventId) {
     return `evt:${payload.eventId}`;

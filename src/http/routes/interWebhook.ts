@@ -1,7 +1,7 @@
 import express, { Request, Response, Router } from 'express';
 import { z } from 'zod';
 import { logger } from '../../shared/logger';
-import { processInterEvent } from '../../domain/webhookProcessor';
+import { extractInterNotifications, processInterEvent } from '../../domain/webhookProcessor';
 
 const interWebhookSchema = z
   .object({
@@ -37,17 +37,24 @@ export function interWebhookRoutes(): Router {
       return;
     }
 
-    if (!parsed.data.idRec && !parsed.data.txid) {
-      req.log.warn('webhook do inter sem idRec nem txid no nivel de cima', {
+    const notifications = extractInterNotifications(parsed.data);
+
+    if (notifications.length === 0) {
+      req.log.warn('webhook do inter sem notificacao reconhecivel', {
         keys: Object.keys(parsed.data),
       });
+      return;
     }
 
-    processInterEvent(parsed.data, req.log).catch((error) => {
-      req.log.error('falha ao processar webhook do inter', {
-        message: (error as Error).message,
+    for (const notification of notifications) {
+      processInterEvent(notification, req.log).catch((error) => {
+        req.log.error('falha ao processar webhook do inter', {
+          idRec: notification.idRec ?? null,
+          txid: notification.txid ?? null,
+          message: (error as Error).message,
+        });
       });
-    });
+    }
   };
 
   router.post('/inter/rec', handle);

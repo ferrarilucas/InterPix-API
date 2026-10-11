@@ -357,3 +357,113 @@ describe('POST /webhooks/inter', () => {
     expect(getCharge).not.toHaveBeenCalled();
   });
 });
+describe('formato real do Inter (lista recs/cobsr do padrao Bacen)', () => {
+  it('aplica a autorizacao quando o Inter manda recs com a recorrencia aprovada', async () => {
+    const subscription = await createFixture();
+    const recId = `RR${randomUUID().replace(/-/g, '')}`;
+    await updateSubscriptionStatus(subscription.id, 'PENDING_AUTH', { interRecId: recId });
+
+    const getRecurrence = vi.spyOn(inter, 'getRecurrence').mockResolvedValue({
+      recId,
+      status: 'APPROVED',
+      rawStatus: 'APROVADA',
+    });
+
+    const response = await request(app)
+      .post('/webhooks/inter')
+      .send({ recs: [{ idRec: recId, status: 'APROVADA', ativacao: { tipoJornada: 'JORNADA_2' } }] });
+
+    expect(response.status).toBe(200);
+    await vi.waitFor(async () => {
+      expect(getRecurrence).toHaveBeenCalledWith(recId);
+      const updated = await findSubscriptionById(subscription.id);
+      expect(updated?.status).toBe('ACTIVE');
+      expect(await listDeliveredEventTypes(subscription.id)).toContain('subscription.authorized');
+    }, WAIT_FOR_OPTS);
+  });
+
+  it('consulta a cobranca pelo txid quando o Inter manda cobsr', async () => {
+    const subscription = await createFixture();
+    const recId = `RR${randomUUID().replace(/-/g, '')}`;
+    const txid = randomUUID().replace(/-/g, '');
+    await updateSubscriptionStatus(subscription.id, 'ACTIVE', { interRecId: recId });
+    const cycle = await insertCycle({
+      subscriptionId: subscription.id,
+      seq: 1,
+      dueDate: '2026-09-20',
+      amount: '29.90',
+    });
+    await updateCycleStatus(cycle.id, 'SENT', { interTxid: txid });
+
+    const getCharge = vi.spyOn(inter, 'getChargeByTxid').mockResolvedValue({
+      txid,
+      status: 'PAID',
+      rawStatus: 'CONCLUIDA',
+      endToEndId: 'E00416968',
+      paidAt: '2026-09-20T10:00:00Z',
+    });
+
+    await request(app)
+      .post('/webhooks/inter')
+      .send({
+        cobsr: [
+          {
+            idRec: recId,
+            txid,
+            status: 'CONCLUIDA',
+            atualizacao: [{ status: 'CONCLUIDA', data: '2026-09-20T07:00:00-03:00' }],
+            tentativas: [],
+            pix: [],
+          },
+        ],
+      });
+
+    await vi.waitFor(async () => {
+      expect(getCharge).toHaveBeenCalledWith(txid);
+      expect((await findCycleById(cycle.id))?.status).toBe('PAID');
+    }, WAIT_FOR_OPTS);
+  });
+
+  it('processa cada item quando a lista traz mais de uma recorrencia', async () => {
+    const first = await createFixture();
+    const second = await createFixture();
+    const firstRec = `RR${randomUUID().replace(/-/g, '')}`;
+    const secondRec = `RR${randomUUID().replace(/-/g, '')}`;
+    await updateSubscriptionStatus(first.id, 'PENDING_AUTH', { interRecId: firstRec });
+    await updateSubscriptionStatus(second.id, 'PENDING_AUTH', { interRecId: secondRec });
+
+    vi.spyOn(inter, 'getRecurrence').mockImplementation(async (recId: string) => ({
+      recId,
+      status: 'APPROVED',
+      rawStatus: 'APROVADA',
+    }));
+
+    await request(app)
+      .post('/webhooks/inter')
+      .send({
+        recs: [
+          { idRec: firstRec, status: 'APROVADA' },
+          { idRec: secondRec, status: 'APROVADA' },
+        ],
+      });
+
+    await vi.waitFor(async () => {
+      expect((await findSubscriptionById(first.id))?.status).toBe('ACTIVE');
+      expect((await findSubscriptionById(second.id))?.status).toBe('ACTIVE');
+    }, WAIT_FOR_OPTS);
+  });
+
+  it('ignora item da lista sem idRec nem txid sem consultar o Inter', async () => {
+    const getRecurrence = vi.spyOn(inter, 'getRecurrence');
+    const getCharge = vi.spyOn(inter, 'getChargeByTxid');
+
+    const response = await request(app)
+      .post('/webhooks/inter')
+      .send({ recs: [{ status: 'APROVADA' }], cobsr: [{ status: 'ATIVA' }] });
+
+    expect(response.status).toBe(200);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(getRecurrence).not.toHaveBeenCalled();
+    expect(getCharge).not.toHaveBeenCalled();
+  });
+});

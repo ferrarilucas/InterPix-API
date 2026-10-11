@@ -49,16 +49,16 @@ describe('log de acesso', () => {
     expect(line.body).toEqual({ recs: [{ idRec: 'RR123', status: 'APROVADA' }] });
   });
 
-  it('avisa quando o corpo do webhook nao traz idRec nem txid no nivel de cima', async () => {
+  it('avisa quando o corpo do webhook nao traz nenhuma notificacao reconhecivel', async () => {
     const spy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
 
-    await request(app).post('/webhooks/inter/rec').send({ recs: [{ idRec: 'RR123' }] });
+    await request(app).post('/webhooks/inter/rec').send({ algo: [{ outro: 'formato' }] });
 
     const line = await waitForLine(
       spy,
-      (l) => l.message === 'webhook do inter sem idRec nem txid no nivel de cima',
+      (l) => l.message === 'webhook do inter sem notificacao reconhecivel',
     );
-    expect(line.keys).toEqual(['recs']);
+    expect(line.keys).toEqual(['algo']);
   });
 
   it('registra metodo, caminho e status de chamadas recusadas por falta de credencial', async () => {
